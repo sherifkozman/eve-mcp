@@ -19,7 +19,9 @@ class FileCredentialStore:
             return {}
         try:
             ensure_private_state_dir(self.state_dir)
-            return json.loads(SafeFS.from_roots([self.state_dir]).read_text(self.path, encoding="utf-8"))
+            return json.loads(
+                SafeFS.from_roots([self.state_dir]).read_text(self.path, encoding="utf-8")
+            )
         except (OSError, json.JSONDecodeError):
             return {}
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-from pathlib import Path
 import secrets
 import stat
+from pathlib import Path
 
 from eve_client.path_policy import PathPolicy, ensure_path_is_safe
 
@@ -50,10 +51,8 @@ def atomic_write(
         os.replace(tmp_name, target.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
         os.fsync(dir_fd)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name, dir_fd=dir_fd)
-        except OSError:
-            pass
         raise
     finally:
         os.close(dir_fd)

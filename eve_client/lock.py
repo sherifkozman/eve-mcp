@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import socket
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 from eve_client.safe_fs import SafeFS
 from eve_client.state_dir import ensure_private_state_dir
@@ -56,7 +56,7 @@ def installer_lock_is_held(state_dir: Path) -> bool:
     path = lock_path(state_dir)
     if not path.exists():
         return False
-    handle = open(path, "r+", encoding="utf-8")
+    handle = open(path, "r+", encoding="utf-8")  # noqa: SIM115
     try:
         if fcntl is None:  # pragma: no cover
             raise InstallerLockUnsupportedPlatformError(
@@ -78,7 +78,7 @@ def installer_lock(state_dir: Path):
     path = lock_path(state_dir)
     if not path.exists():
         SafeFS.from_roots([state_dir]).write_text_atomic(path, "", permissions=0o600)
-    handle = open(path, "r+", encoding="utf-8")
+    handle = open(path, "r+", encoding="utf-8")  # noqa: SIM115
     try:
         if fcntl is None:  # pragma: no cover
             raise InstallerLockUnsupportedPlatformError(

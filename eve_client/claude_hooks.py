@@ -45,7 +45,9 @@ class _MemoryClient:
             "X-Source-Agent": source_agent_header("claude-code"),
         }
 
-    def _post(self, path: str, payload: dict[str, Any], *, timeout: float) -> tuple[bool, dict[str, Any] | None]:
+    def _post(
+        self, path: str, payload: dict[str, Any], *, timeout: float
+    ) -> tuple[bool, dict[str, Any] | None]:
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
@@ -90,11 +92,17 @@ class _MemoryClient:
     ) -> tuple[bool, dict[str, Any] | None]:
         return self._post(
             "/memory/session/pre_compaction",
-            {"session_id": session_id, "critical_facts": critical_facts, "tool_name": "claude-code"},
+            {
+                "session_id": session_id,
+                "critical_facts": critical_facts,
+                "tool_name": "claude-code",
+            },
             timeout=15.0,
         )
 
-    def extract(self, *, transcript: str, session_id: str | None) -> tuple[bool, dict[str, Any] | None]:
+    def extract(
+        self, *, transcript: str, session_id: str | None
+    ) -> tuple[bool, dict[str, Any] | None]:
         payload: dict[str, Any] = {
             "transcript": transcript,
             "source": "claude_code",
@@ -323,7 +331,9 @@ def session_start_main() -> None:
         _safe_exit()
     transcript_path = str(hook_input.get("transcript_path", ""))
     recent_topics = _extract_recent_topics(transcript_path)
-    client = _MemoryClient(base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key)
+    client = _MemoryClient(
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+    )
     ok, data = client.session_start(
         session_id=hook_input.get("session_id"),
         summary=f"Claude Code session ({hook_input.get('source', 'startup')})",
@@ -331,7 +341,9 @@ def session_start_main() -> None:
     )
     if not ok or not data:
         _safe_exit()
-    _persist_session_id(str(data.get("session_id", "")) or str(hook_input.get("session_id", "")) or None)
+    _persist_session_id(
+        str(data.get("session_id", "")) or str(hook_input.get("session_id", "")) or None
+    )
     context = _build_session_context(data)
     if context:
         _emit_context("SessionStart", context)
@@ -346,7 +358,9 @@ def prompt_enrich_main() -> None:
     api_key = _load_api_key()
     if not api_key:
         _safe_exit()
-    client = _MemoryClient(base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key)
+    client = _MemoryClient(
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+    )
     ok, data = client.search(query=prompt)
     if not ok or not data:
         _safe_exit()
@@ -371,7 +385,9 @@ def pre_compact_main() -> None:
     api_key = _load_api_key()
     if not api_key:
         _safe_exit()
-    client = _MemoryClient(base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key)
+    client = _MemoryClient(
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+    )
     client.pre_compaction(session_id=session_id, critical_facts=critical_facts)
     _safe_exit()
 
@@ -385,8 +401,12 @@ def session_end_main() -> None:
     if not api_key:
         _safe_exit()
     session_id = os.environ.get("EVE_MEMORY_SESSION_ID") or hook_input.get("session_id")
-    client = _MemoryClient(base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key)
-    client.extract(transcript=transcript, session_id=session_id if isinstance(session_id, str) else None)
+    client = _MemoryClient(
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+    )
+    client.extract(
+        transcript=transcript, session_id=session_id if isinstance(session_id, str) else None
+    )
     summary = (
         hook_input.get("summary")
         if isinstance(hook_input.get("summary"), str)

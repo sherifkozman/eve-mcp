@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 from pathlib import Path
-
 
 STATE_DIR_MODE = 0o700
 
@@ -22,9 +22,13 @@ def _validate_directory(path: Path, *, require_private: bool) -> None:
         raise StateDirSecurityError(f"Refusing to use symlinked state directory path: {path}")
     if require_private:
         if stats.st_mode & 0o077:
-            raise StateDirSecurityError(f"State directory must not be group/world accessible: {path}")
+            raise StateDirSecurityError(
+                f"State directory must not be group/world accessible: {path}"
+            )
     elif stats.st_mode & 0o022:
-        raise StateDirSecurityError(f"State directory parent must not be group/world writable: {path}")
+        raise StateDirSecurityError(
+            f"State directory parent must not be group/world writable: {path}"
+        )
 
 
 def _validate_state_dir_chain(path: Path) -> None:
@@ -57,16 +61,12 @@ def ensure_private_state_dir(path: Path) -> Path:
     if repair_anchor_permissions:
         current = path
         while True:
-            try:
+            with contextlib.suppress(OSError):
                 os.chmod(current, STATE_DIR_MODE)
-            except OSError:
-                pass
             if current == anchor or current.parent == current:
                 break
             current = current.parent
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(path, STATE_DIR_MODE)
-    except OSError:
-        pass
     _validate_state_dir_chain(path)
     return path

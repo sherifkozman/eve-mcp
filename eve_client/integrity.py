@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -29,7 +30,9 @@ def integrity_key_path(state_dir: Path) -> Path:
 
 
 def integrity_key_name(state_dir: Path, *, allow_file_fallback: bool) -> str:
-    installation_id = get_or_create_installation_id(state_dir, allow_file_fallback=allow_file_fallback)
+    installation_id = get_or_create_installation_id(
+        state_dir, allow_file_fallback=allow_file_fallback
+    )
     return f"{INTEGRITY_KEY_NAME_PREFIX}:{installation_id}"
 
 
@@ -62,10 +65,8 @@ def clear_integrity_key(state_dir: Path, *, allow_file_fallback: bool = False) -
     path = integrity_key_path(state_dir)
     key_name = integrity_key_name(state_dir, allow_file_fallback=allow_file_fallback)
     keyring_store = KeyringCredentialStore()
-    try:
+    with contextlib.suppress(KeyringError):
         keyring_store.delete(key_name)
-    except KeyringError:
-        pass
     if not allow_file_fallback:
         return
     fs = SafeFS.from_roots([state_dir])

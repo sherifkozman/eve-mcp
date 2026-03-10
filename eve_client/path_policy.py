@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -13,7 +13,7 @@ class PathPolicy:
     allowed_roots: tuple[Path, ...]
 
     @classmethod
-    def from_roots(cls, roots: list[Path] | tuple[Path, ...]) -> "PathPolicy":
+    def from_roots(cls, roots: list[Path] | tuple[Path, ...]) -> PathPolicy:
         return cls(allowed_roots=tuple(Path(root).expanduser() for root in roots))
 
 
@@ -67,7 +67,10 @@ def ensure_path_is_safe(path: Path, policy: PathPolicy) -> Path:
     for root in resolved_roots:
         ensure_no_symlink_components(root)
     real_path = safe_real_path(target)
-    if not any(real_path == safe_real_path(root) or safe_real_path(root) in real_path.parents for root in resolved_roots):
+    if not any(
+        real_path == safe_real_path(root) or safe_real_path(root) in real_path.parents
+        for root in resolved_roots
+    ):
         raise OSError(f"Refusing to write outside allowed roots: {target}")
     ensure_existing_file_is_safe(target)
     return target

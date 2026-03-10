@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 import pytest
-
 from eve_client.config import (
     DEFAULT_API_BASE_URL,
     DEFAULT_MCP_BASE_URL,
@@ -78,7 +77,9 @@ def test_resolve_config_honors_legacy_feature_codex_cli_key(monkeypatch, tmp_pat
     assert any("feature_codex_cli is deprecated" in str(item.message) for item in caught)
 
 
-def test_resolve_config_codex_disable_env_overrides_local_config(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_codex_disable_env_overrides_local_config(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_DISABLE_CODEX", "1")
@@ -101,7 +102,9 @@ def test_resolve_config_defaults_codex_to_disabled(monkeypatch, tmp_path: Path) 
     assert config.codex_source == "default"
 
 
-def test_resolve_config_codex_disable_env_false_does_not_disable(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_codex_disable_env_false_does_not_disable(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_DISABLE_CODEX", "false")
@@ -113,7 +116,9 @@ def test_resolve_config_codex_disable_env_false_does_not_disable(monkeypatch, tm
     assert config.codex_source == "config"
 
 
-def test_resolve_config_codex_disable_env_zero_does_not_disable(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_codex_disable_env_zero_does_not_disable(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_DISABLE_CODEX", "0")
@@ -126,7 +131,9 @@ def test_resolve_config_codex_disable_env_zero_does_not_disable(monkeypatch, tmp
 
 
 @pytest.mark.parametrize("env_value", ["", " ", "false", "False", "garbage"])
-def test_resolve_config_non_truthy_disable_values_do_not_disable_codex(monkeypatch, tmp_path: Path, env_value: str) -> None:
+def test_resolve_config_non_truthy_disable_values_do_not_disable_codex(
+    monkeypatch, tmp_path: Path, env_value: str
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_DISABLE_CODEX", env_value)
@@ -139,7 +146,9 @@ def test_resolve_config_non_truthy_disable_values_do_not_disable_codex(monkeypat
 
 
 @pytest.mark.parametrize("env_value", ["1", "true", "True", "yes", "on"])
-def test_resolve_config_truthy_disable_values_disable_codex(monkeypatch, tmp_path: Path, env_value: str) -> None:
+def test_resolve_config_truthy_disable_values_disable_codex(
+    monkeypatch, tmp_path: Path, env_value: str
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_DISABLE_CODEX", env_value)
@@ -217,7 +226,9 @@ def test_resolve_config_codex_precedence_matrix(
     assert config.codex_source == expected_source
 
 
-def test_resolve_config_enables_file_fallback_from_local_config(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_enables_file_fallback_from_local_config(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     config_path = get_config_path()
@@ -257,7 +268,9 @@ def test_resolve_config_honors_ui_base_url_env(monkeypatch, tmp_path: Path) -> N
     assert config.ui_base_url == "https://staging.evemem.com"
 
 
-def test_resolve_config_rejects_untrusted_ui_base_url_without_override(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_rejects_untrusted_ui_base_url_without_override(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_UI_BASE_URL", "https://evil.example.com/custom/path")
@@ -267,7 +280,9 @@ def test_resolve_config_rejects_untrusted_ui_base_url_without_override(monkeypat
     assert config.blocked_ui_base_url == "https://evil.example.com"
 
 
-def test_resolve_config_allows_custom_local_ui_base_url_with_override(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_allows_custom_local_ui_base_url_with_override(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_UI_BASE_URL", "http://localhost:3300/custom/path")
@@ -286,7 +301,9 @@ def test_resolve_config_rejects_official_suffix_confusion(monkeypatch, tmp_path:
     assert config.blocked_ui_base_url == "https://evemem.com.evil.com"
 
 
-def test_resolve_config_accepts_official_origin_with_default_https_port(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_accepts_official_origin_with_default_https_port(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_UI_BASE_URL", "https://evemem.com:443")
@@ -295,7 +312,9 @@ def test_resolve_config_accepts_official_origin_with_default_https_port(monkeypa
     assert config.blocked_ui_base_url is None
 
 
-def test_resolve_config_rejects_official_origin_with_non_default_port(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_rejects_official_origin_with_non_default_port(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("EVE_UI_BASE_URL", "https://evemem.com:8443")

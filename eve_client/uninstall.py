@@ -15,8 +15,8 @@ from eve_client.merge import (
     eve_json_entry_has_unknown_fields,
     eve_toml_entry_has_unknown_fields,
     is_eve_companion_file,
-    remove_companion_file,
     remove_claude_hooks_json_config,
+    remove_companion_file,
     remove_gemini_hooks_json_config,
     remove_json_config,
     remove_toml_config,
@@ -62,16 +62,22 @@ def _render_uninstall_content(record: ManifestRecord) -> str | None:
             return None
         if path.suffix == ".toml":
             if eve_toml_entry_has_unknown_fields(path):
-                raise _blocked_uninstall(f"Refusing to remove user-modified Eve TOML block: {path}", path)
+                raise _blocked_uninstall(
+                    f"Refusing to remove user-modified Eve TOML block: {path}", path
+                )
             return remove_toml_config(path)
         if eve_json_entry_has_unknown_fields(path, record.tool):
-            raise _blocked_uninstall(f"Refusing to remove user-modified Eve config entry: {path}", path)
+            raise _blocked_uninstall(
+                f"Refusing to remove user-modified Eve config entry: {path}", path
+            )
         return remove_json_config(path)
     if record.action_type == "write_hooks_config":
         if not path.exists():
             return None
         if eve_json_entry_has_unknown_fields(path, record.tool):
-            raise _blocked_uninstall(f"Refusing to remove user-modified Eve hook entry: {path}", path)
+            raise _blocked_uninstall(
+                f"Refusing to remove user-modified Eve hook entry: {path}", path
+            )
         if record.tool == "claude-code":
             return remove_claude_hooks_json_config(path)
         if record.tool == "gemini-cli":
@@ -98,7 +104,9 @@ def uninstall_tools(
             config.state_dir,
             {"transaction_id": transaction_id, "phase": "uninstall", "tools": tools},
         )
-        records = load_manifest(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
+        records = load_manifest(
+            config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
+        )
         target = [record for record in records if record.tool in tools]
         modified: list[_ModifiedFile] = []
         try:
@@ -122,7 +130,9 @@ def uninstall_tools(
                             scope=record.scope,
                         )
                     )
-                    SafeFS.from_roots(_allowed_roots(record, config)).write_text_atomic(path, content or "", permissions=0o600)
+                    SafeFS.from_roots(_allowed_roots(record, config)).write_text_atomic(
+                        path, content or "", permissions=0o600
+                    )
                     fmt = "toml" if path.suffix == ".toml" else "json"
                     if not validate_config(path, fmt):
                         raise UninstallError(f"Rendered uninstall config failed validation: {path}")
@@ -143,13 +153,17 @@ def uninstall_tools(
                     )
                     updated = _render_uninstall_content(record)
                     if updated:
-                        SafeFS.from_roots(_allowed_roots(record, config)).write_text_atomic(path, updated, permissions=0o600)
+                        SafeFS.from_roots(_allowed_roots(record, config)).write_text_atomic(
+                            path, updated, permissions=0o600
+                        )
                     else:
                         SafeFS.from_roots(_allowed_roots(record, config)).delete_file(path)
             for tool in tools:
                 credential_store.delete_api_key(tool)
             remaining = [record for record in records if record.tool not in tools]
-            write_manifest(config.state_dir, remaining, allow_file_fallback=config.allow_file_secret_fallback)
+            write_manifest(
+                config.state_dir, remaining, allow_file_fallback=config.allow_file_secret_fallback
+            )
             clear_transaction_state(config.state_dir)
             return UninstallResult(
                 transaction_id=transaction_id,
@@ -161,5 +175,11 @@ def uninstall_tools(
                 credential_store.delete_api_key(tool)
             for item in reversed(modified):
                 if item.backup_path and item.backup_path.exists():
-                    restore_backup(item.backup_path, item.path, allowed_roots=[config.project_root] if item.scope == "project" else [item.path.parent])
+                    restore_backup(
+                        item.backup_path,
+                        item.path,
+                        allowed_roots=[config.project_root]
+                        if item.scope == "project"
+                        else [item.path.parent],
+                    )
             raise

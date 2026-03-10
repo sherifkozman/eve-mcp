@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from eve_client.safe_fs import SafeFS
@@ -37,7 +37,7 @@ def create_backup(
 ) -> tuple[Path | None, str | None]:
     if not path.exists():
         return None, None
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     target_dir = backup_dir(state_dir, transaction_id)
     ensure_private_state_dir(state_dir)
     ensure_private_state_dir(target_dir)

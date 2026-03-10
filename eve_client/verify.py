@@ -25,7 +25,6 @@ from eve_client.models import DetectedTool, ToolName
 from eve_client.plan import feature_enabled
 from eve_client.tool_state import classify_codex_disabled_state, classify_codex_verify_state
 
-
 _SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{12,}")
 
 
@@ -65,7 +64,9 @@ def _parse_response(body: str) -> dict[str, Any] | None:
     return None
 
 
-def _request(method: str, url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+def _request(
+    method: str, url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float
+) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - installer validates destination separately
@@ -94,7 +95,9 @@ def verify_connectivity(
         if not secret:
             metadata_url = _protected_resource_metadata_url(url)
             try:
-                request = urllib.request.Request(metadata_url, headers={"Accept": "application/json"}, method="GET")
+                request = urllib.request.Request(
+                    metadata_url, headers={"Accept": "application/json"}, method="GET"
+                )
                 with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                     parsed = json.loads(response.read().decode("utf-8"))
                 auth_servers = parsed.get("authorization_servers") or []
@@ -105,11 +108,20 @@ def verify_connectivity(
                         "authorization_servers": auth_servers,
                         "mode": "oauth-metadata",
                     }
-                return {"success": False, "error": "Protected resource metadata missing OAuth details"}
+                return {
+                    "success": False,
+                    "error": "Protected resource metadata missing OAuth details",
+                }
             except urllib.error.HTTPError as exc:
-                return {"success": False, "error": f"HTTP {exc.code}: {_sanitize_error(exc.reason)}"}
+                return {
+                    "success": False,
+                    "error": f"HTTP {exc.code}: {_sanitize_error(exc.reason)}",
+                }
             except urllib.error.URLError as exc:
-                return {"success": False, "error": f"Connection failed: {_sanitize_error(exc.reason)}"}
+                return {
+                    "success": False,
+                    "error": f"Connection failed: {_sanitize_error(exc.reason)}",
+                }
             except Exception as exc:  # noqa: BLE001
                 return {"success": False, "error": _sanitize_error(exc)}
         headers["Authorization"] = f"Bearer {secret}"
@@ -146,7 +158,9 @@ def verify_connectivity(
         return {
             "success": True,
             "server_info": init.get("result", {}).get("serverInfo"),
-            "tool_names": [item.get("name", "unknown") for item in tools.get("result", {}).get("tools", [])],
+            "tool_names": [
+                item.get("name", "unknown") for item in tools.get("result", {}).get("tools", [])
+            ],
         }
     except urllib.error.HTTPError as exc:
         return {"success": False, "error": f"HTTP {exc.code}: {_sanitize_error(exc.reason)}"}
@@ -210,11 +224,15 @@ def verify_tools(
                 else False
             ),
             "companion_path": str(companion_path) if companion_path else None,
-            "companion_present": bool(companion_path and is_eve_companion_file(companion_path, detected.name)),
+            "companion_present": bool(
+                companion_path and is_eve_companion_file(companion_path, detected.name)
+            ),
             "credential_source": source,
             "connectivity": {"success": False, "error": "not checked"},
         }
-        codex_disabled_state = classify_codex_disabled_state(config) if detected.name == "codex-cli" else None
+        codex_disabled_state = (
+            classify_codex_disabled_state(config) if detected.name == "codex-cli" else None
+        )
         if codex_disabled_state is not None:
             result["state"] = codex_disabled_state
             result["connectivity"] = {"success": False, "error": "feature disabled"}

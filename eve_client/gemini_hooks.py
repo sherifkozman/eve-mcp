@@ -57,7 +57,9 @@ class _MemoryClient:
             headers["X-API-Key"] = self.api_key
         return headers
 
-    def _post(self, path: str, payload: dict[str, Any], *, timeout: float) -> tuple[bool, dict[str, Any] | None]:
+    def _post(
+        self, path: str, payload: dict[str, Any], *, timeout: float
+    ) -> tuple[bool, dict[str, Any] | None]:
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
@@ -87,7 +89,9 @@ class _MemoryClient:
             timeout=5.0,
         )
 
-    def pre_compact(self, *, session_id: str, messages: list[dict[str, str]]) -> tuple[bool, dict[str, Any] | None]:
+    def pre_compact(
+        self, *, session_id: str, messages: list[dict[str, str]]
+    ) -> tuple[bool, dict[str, Any] | None]:
         return self._post(
             "/memory/hook/compact",
             {"session_id": session_id, "messages": messages},
@@ -155,7 +159,9 @@ def _render_injected_context(data: dict[str, Any]) -> str:
         lines = []
         for item in prefs[:10]:
             if isinstance(item, dict):
-                lines.append(f"- {item.get('category', 'general')}/{item.get('key', 'unknown')}: {item.get('value')}")
+                lines.append(
+                    f"- {item.get('category', 'general')}/{item.get('key', 'unknown')}: {item.get('value')}"
+                )
         if lines:
             parts.append("## User Preferences\n" + "\n".join(lines))
 
@@ -247,7 +253,13 @@ def _read_compact_messages(path_value: str) -> list[dict[str, str]]:
     path = Path(path_value)
     if not path.is_file():
         return []
-    role_map = {"model": "assistant", "assistant": "assistant", "user": "user", "human": "user", "system": "system"}
+    role_map = {
+        "model": "assistant",
+        "assistant": "assistant",
+        "user": "user",
+        "human": "user",
+        "system": "system",
+    }
     messages: list[dict[str, str]] = []
     try:
         with path.open(encoding="utf-8") as handle:
@@ -316,7 +328,11 @@ def prompt_enrich() -> None:
             continue
         chunk = item.get("chunk", {})
         text = chunk.get("text", "") if isinstance(chunk, dict) else item.get("text", "")
-        store = item.get("store", chunk.get("source", "")) if isinstance(chunk, dict) else item.get("store", "")
+        store = (
+            item.get("store", chunk.get("source", ""))
+            if isinstance(chunk, dict)
+            else item.get("store", "")
+        )
         similarity = item.get("similarity", 0)
         if text:
             lines.append(f"- [{store}] {text[:500]} (relevance: {similarity:.0%})")
@@ -332,7 +348,11 @@ def pre_compact() -> None:
     payload = _load_hook_input()
     session_id = payload.get("session_id")
     transcript_path = payload.get("transcript_path")
-    if not isinstance(session_id, str) or not session_id.strip() or not isinstance(transcript_path, str):
+    if (
+        not isinstance(session_id, str)
+        or not session_id.strip()
+        or not isinstance(transcript_path, str)
+    ):
         _safe_exit({"ok": True})
     messages = _read_compact_messages(transcript_path)
     if not messages:
@@ -368,7 +388,9 @@ def session_end() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        _log("Usage: python -m eve_client.gemini_hooks <session_start|prompt_enrich|pre_compact|session_end>")
+        _log(
+            "Usage: python -m eve_client.gemini_hooks <session_start|prompt_enrich|pre_compact|session_end>"
+        )
         _safe_exit()
     command = sys.argv[1]
     if command == "session_start":

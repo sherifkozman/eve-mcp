@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 from keyring.errors import KeyringError, PasswordDeleteError
 
-from eve_client.auth.base import CredentialRecord, CredentialStore, CredentialStoreUnavailableError, OAuthSession
+from eve_client.auth.base import (
+    CredentialRecord,
+    CredentialStore,
+    CredentialStoreUnavailableError,
+    OAuthSession,
+)
 from eve_client.auth.file_store import FileCredentialStore
 from eve_client.auth.keyring_store import KeyringCredentialStore
 from eve_client.models import ToolName
@@ -78,7 +84,9 @@ class LocalCredentialStore(CredentialStore):
         label = "api-key" if auth_mode == "api-key" else auth_mode
         try:
             self.keyring_store.set(key_name, secret)
-            return CredentialRecord(tool=tool, auth_mode=auth_mode, source="keyring", value_masked=_mask_secret(secret))
+            return CredentialRecord(
+                tool=tool, auth_mode=auth_mode, source="keyring", value_masked=_mask_secret(secret)
+            )
         except KeyringError:
             if not self.allow_file_fallback:
                 raise CredentialStoreUnavailableError(
@@ -87,7 +95,12 @@ class LocalCredentialStore(CredentialStore):
             payload = self.file_store.load()
             payload[key_name] = secret
             self.file_store.write(payload)
-            return CredentialRecord(tool=tool, auth_mode=label, source="file-fallback", value_masked=_mask_secret(secret))
+            return CredentialRecord(
+                tool=tool,
+                auth_mode=label,
+                source="file-fallback",
+                value_masked=_mask_secret(secret),
+            )
 
     def _get_secret(self, tool: ToolName, auth_mode: str) -> tuple[str | None, str | None]:
         key_name = self._key_name(tool, auth_mode)
@@ -107,10 +120,8 @@ class LocalCredentialStore(CredentialStore):
 
     def _delete_secret(self, tool: ToolName, auth_mode: str) -> None:
         key_name = self._key_name(tool, auth_mode)
-        try:
+        with contextlib.suppress(KeyringError, PasswordDeleteError):
             self.keyring_store.delete(key_name)
-        except (KeyringError, PasswordDeleteError):
-            pass
 
         payload = self.file_store.load()
         if key_name in payload:

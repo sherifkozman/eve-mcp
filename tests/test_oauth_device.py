@@ -5,7 +5,6 @@ import json
 from urllib.error import HTTPError
 
 import pytest
-
 from eve_client.oauth_device import (
     OAuthDeviceFlowError,
     poll_auth0_device_token,
@@ -21,14 +20,16 @@ class _FakeResponse:
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
 
-def test_start_auth0_device_authorization_returns_expected_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_auth0_device_authorization_returns_expected_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_urlopen(request, timeout=10.0):  # noqa: ARG001
         assert request.full_url == "https://evemem.us.auth0.com/oauth/device/code"
         payload = request.data.decode("utf-8")
@@ -54,10 +55,15 @@ def test_start_auth0_device_authorization_returns_expected_fields(monkeypatch: p
     )
     assert result.device_code == "device-code"
     assert result.user_code == "USER-CODE"
-    assert result.verification_uri_complete == "https://evemem.us.auth0.com/activate?user_code=USER-CODE"
+    assert (
+        result.verification_uri_complete
+        == "https://evemem.us.auth0.com/activate?user_code=USER-CODE"
+    )
 
 
-def test_start_auth0_device_authorization_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_auth0_device_authorization_raises_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_urlopen(request, timeout=10.0):  # noqa: ARG001
         raise HTTPError(
             request.full_url,
@@ -119,7 +125,9 @@ def test_poll_auth0_device_token_waits_then_returns_token(monkeypatch: pytest.Mo
     assert result.scope == "openid profile email offline_access memory.read memory.write"
 
 
-def test_poll_auth0_device_token_handles_auth0_pending_message(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_poll_auth0_device_token_handles_auth0_pending_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = iter(
         [
             HTTPError(

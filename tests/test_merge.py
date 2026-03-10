@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
-import tomllib
-
 from eve_client.merge import (
+    companion_content,
     has_eve_claude_hooks,
     has_eve_gemini_hooks,
-    companion_content,
     has_eve_json_entry,
     has_eve_toml_entry,
     is_eve_companion_file,
@@ -141,15 +140,13 @@ def test_remove_toml_config_only_removes_eve_entry(tmp_path: Path) -> None:
 
 def test_toml_merge_and_remove_preserve_comments_and_adjacent_formatting(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
-    original = (
-        '# top comment\n'
-        '[mcp_servers.other]\n'
-        'url = "https://example.com"\n'
-        '# other comment\n'
-    )
+    original = '# top comment\n[mcp_servers.other]\nurl = "https://example.com"\n# other comment\n'
     config.write_text(original, encoding="utf-8")
     merged = merge_toml_config(config, "codex-cli", "https://mcp.evemem.com", "eve-key")
-    assert '# top comment\n[mcp_servers.other]\nurl = "https://example.com"\n# other comment\n' in merged
+    assert (
+        '# top comment\n[mcp_servers.other]\nurl = "https://example.com"\n# other comment\n'
+        in merged
+    )
     config.write_text(merged, encoding="utf-8")
     removed = remove_toml_config(config)
     assert removed == original
@@ -172,7 +169,9 @@ def test_has_eve_entries_and_companion_detection(tmp_path: Path) -> None:
     assert has_eve_claude_hooks(json_config) is True
 
     toml_config = tmp_path / "config.toml"
-    toml_config.write_text('[mcp_servers."eve-memory"]\nurl = "https://mcp.evemem.com"\n', encoding="utf-8")
+    toml_config.write_text(
+        '[mcp_servers."eve-memory"]\nurl = "https://mcp.evemem.com"\n', encoding="utf-8"
+    )
     assert has_eve_toml_entry(toml_config) is True
 
     gemini_config = tmp_path / ".gemini" / "settings.json"
@@ -191,7 +190,9 @@ def test_has_eve_entries_and_companion_detection(tmp_path: Path) -> None:
     assert has_eve_gemini_hooks(gemini_config) is True
 
     companion = tmp_path / ".claude" / "CLAUDE.md"
-    companion.write_text(companion_content("claude-code", "https://mcp.evemem.com"), encoding="utf-8")
+    companion.write_text(
+        companion_content("claude-code", "https://mcp.evemem.com"), encoding="utf-8"
+    )
     assert is_eve_companion_file(companion, "claude-code") is True
 
 

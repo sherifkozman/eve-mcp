@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from eve_client.atomic import atomic_write
 
 

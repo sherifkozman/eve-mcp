@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, ExitStack
 import json
 import os
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from keyring.errors import KeyringError
-
 from eve_client.integrity import HMAC_ALGORITHM
 from eve_client.manifest import ManifestIntegrityError, load_manifest, manifest_path, write_manifest
 from eve_client.models import ManifestRecord
 from eve_client.state_binding import get_or_create_installation_id, store_sequence_watermark
+from keyring.errors import KeyringError
 
 
 def _record() -> ManifestRecord:
@@ -41,8 +40,12 @@ def patched_keyring():
         state[key_name] = secret
 
     with ExitStack() as stack:
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password))
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password))
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password)
+        )
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password)
+        )
         yield
 
 
@@ -103,8 +106,14 @@ def test_installation_identity_is_stable(tmp_path: Path) -> None:
 
 def test_manifest_requires_explicit_file_fallback_when_no_keyring(tmp_path: Path) -> None:
     with (
-        patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=KeyringError("no keyring")),
-        patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=KeyringError("no keyring")),
+        patch(
+            "eve_client.auth.keyring_store.keyring.get_password",
+            side_effect=KeyringError("no keyring"),
+        ),
+        patch(
+            "eve_client.auth.keyring_store.keyring.set_password",
+            side_effect=KeyringError("no keyring"),
+        ),
     ):
         with pytest.raises(ManifestIntegrityError):
             write_manifest(tmp_path, [_record()])
@@ -112,8 +121,14 @@ def test_manifest_requires_explicit_file_fallback_when_no_keyring(tmp_path: Path
 
 def test_manifest_file_fallback_respects_private_permissions(tmp_path: Path) -> None:
     with (
-        patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=KeyringError("no keyring")),
-        patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=KeyringError("no keyring")),
+        patch(
+            "eve_client.auth.keyring_store.keyring.get_password",
+            side_effect=KeyringError("no keyring"),
+        ),
+        patch(
+            "eve_client.auth.keyring_store.keyring.set_password",
+            side_effect=KeyringError("no keyring"),
+        ),
     ):
         write_manifest(tmp_path, [_record()], allow_file_fallback=True)
     key_path = tmp_path / "integrity.key"
@@ -137,6 +152,8 @@ def test_manifest_detects_sequence_replay_against_watermark(tmp_path: Path) -> N
 
 def test_manifest_load_fails_closed_when_keyring_watermark_cannot_be_loaded(tmp_path: Path) -> None:
     write_manifest(tmp_path, [_record()], allow_file_fallback=True)
-    with patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=KeyringError("no keyring")):
+    with patch(
+        "eve_client.auth.keyring_store.keyring.get_password", side_effect=KeyringError("no keyring")
+    ):
         with pytest.raises(ManifestIntegrityError):
             load_manifest(tmp_path)

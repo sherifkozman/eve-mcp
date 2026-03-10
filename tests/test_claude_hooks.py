@@ -12,7 +12,7 @@ class _Response:
     def __init__(self, payload: dict[str, object]) -> None:
         self.payload = payload
 
-    def __enter__(self) -> "_Response":
+    def __enter__(self) -> _Response:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
@@ -42,7 +42,9 @@ def test_api_base_url_strips_mcp_suffix() -> None:
     assert claude_hooks._api_base_url("https://mcp.evemem.com") == "https://mcp.evemem.com"
 
 
-def test_session_start_emits_additional_context_and_persists_session_id(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_session_start_emits_additional_context_and_persists_session_id(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     _write_config(tmp_path)
     env_file = tmp_path / "claude.env"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
@@ -58,9 +60,24 @@ def test_session_start_emits_additional_context_and_persists_session_id(tmp_path
             {
                 "session_id": "sess-1",
                 "injected_context": {
-                    "preferences": [{"category": "code", "key": "style", "value": "concise", "confidence": 0.9}],
-                    "learned_rules": [{"domain": "python", "content": "Prefer explicit tests", "confidence": 0.8, "source_episodes": []}],
-                    "recent_episodic": [{"summary": "Refactored apply path", "event_type": "session_end", "stored_at": "now"}],
+                    "preferences": [
+                        {"category": "code", "key": "style", "value": "concise", "confidence": 0.9}
+                    ],
+                    "learned_rules": [
+                        {
+                            "domain": "python",
+                            "content": "Prefer explicit tests",
+                            "confidence": 0.8,
+                            "source_episodes": [],
+                        }
+                    ],
+                    "recent_episodic": [
+                        {
+                            "summary": "Refactored apply path",
+                            "event_type": "session_end",
+                            "stored_at": "now",
+                        }
+                    ],
                 },
             }
         ),
@@ -83,7 +100,11 @@ def test_prompt_enrich_emits_relevant_memories(tmp_path: Path, monkeypatch, caps
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
     monkeypatch.setattr(
         "sys.stdin",
-        io.StringIO(json.dumps({"prompt": "Find the prior decision about the installer rollback integrity model"})),
+        io.StringIO(
+            json.dumps(
+                {"prompt": "Find the prior decision about the installer rollback integrity model"}
+            )
+        ),
     )
     with patch(
         "eve_client.claude_hooks.urllib.request.urlopen",
@@ -93,7 +114,9 @@ def test_prompt_enrich_emits_relevant_memories(tmp_path: Path, monkeypatch, caps
                     {
                         "store": "semantic",
                         "similarity": 0.91,
-                        "chunk": {"text": "Rollback must fail closed when backups or hashes diverge."},
+                        "chunk": {
+                            "text": "Rollback must fail closed when backups or hashes diverge."
+                        },
                     }
                 ]
             }
@@ -109,13 +132,35 @@ def test_prompt_enrich_emits_relevant_memories(tmp_path: Path, monkeypatch, caps
     assert "Rollback must fail closed" in payload["hookSpecificOutput"]["additionalContext"]
 
 
-def test_session_end_reads_transcript_and_calls_extract_and_end(tmp_path: Path, monkeypatch) -> None:
+def test_session_end_reads_transcript_and_calls_extract_and_end(
+    tmp_path: Path, monkeypatch
+) -> None:
     _write_config(tmp_path)
     transcript_path = tmp_path / "transcript.jsonl"
     transcript_path.write_text(
-        json.dumps({"role": "human", "content": [{"type": "text", "text": "Remember my preference for terse code review findings."}]})
+        json.dumps(
+            {
+                "role": "human",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Remember my preference for terse code review findings.",
+                    }
+                ],
+            }
+        )
         + "\n"
-        + json.dumps({"role": "assistant", "content": [{"type": "text", "text": "Stored that preference and updated the review output."}]})
+        + json.dumps(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Stored that preference and updated the review output.",
+                    }
+                ],
+            }
+        )
         + "\n",
         encoding="utf-8",
     )

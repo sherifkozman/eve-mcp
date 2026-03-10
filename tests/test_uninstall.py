@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
 import json
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from eve_client.apply import apply_install_plan
 from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
-from eve_client.manifest import manifest_path
-from eve_client.manifest import load_manifest
+from eve_client.manifest import load_manifest, manifest_path
 from eve_client.plan import build_install_plan
 from eve_client.uninstall import UninstallError, uninstall_tools
 
@@ -32,9 +30,17 @@ def patched_keyring(state: dict[str, str] | None = None):
         state.pop(key_name, None)
 
     with ExitStack() as stack:
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password))
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password))
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.delete_password", side_effect=delete_password))
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password)
+        )
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password)
+        )
+        stack.enter_context(
+            patch(
+                "eve_client.auth.keyring_store.keyring.delete_password", side_effect=delete_password
+            )
+        )
         yield state
 
 
@@ -54,7 +60,9 @@ def _config(tmp_path: Path) -> ResolvedConfig:
     )
 
 
-def test_uninstall_claude_code_removes_eve_owned_files_and_credential(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_claude_code_removes_eve_owned_files_and_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -86,7 +94,9 @@ def test_uninstall_claude_code_removes_eve_owned_files_and_credential(tmp_path: 
     assert "claude-code:api-key" not in keyring_state
 
 
-def test_uninstall_claude_code_preserves_user_content_in_active_claude_md(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_claude_code_preserves_user_content_in_active_claude_md(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     companion = tmp_path / ".claude" / "CLAUDE.md"
@@ -117,7 +127,9 @@ def test_uninstall_claude_code_preserves_user_content_in_active_claude_md(tmp_pa
     assert "EVE-BEGIN:claude-code:v1" not in content
 
 
-def test_uninstall_preserves_user_content_outside_eve_companion_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_preserves_user_content_outside_eve_companion_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -135,7 +147,9 @@ def test_uninstall_preserves_user_content_outside_eve_companion_block(tmp_path: 
             provided_api_keys={"gemini-cli": "eve-secret"},
         )
         companion = tmp_path / ".gemini" / "GEMINI.md"
-        companion.write_text(companion.read_text(encoding="utf-8") + "\nmanual edit", encoding="utf-8")
+        companion.write_text(
+            companion.read_text(encoding="utf-8") + "\nmanual edit", encoding="utf-8"
+        )
         uninstall_tools(
             config=_config(tmp_path),
             credential_store=credential_store,
@@ -144,12 +158,16 @@ def test_uninstall_preserves_user_content_outside_eve_companion_block(tmp_path: 
     assert "gemini-cli:api-key" not in keyring_state
     assert companion.exists()
     assert companion.read_text(encoding="utf-8").strip() == "manual edit"
-    settings_payload = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+    settings_payload = json.loads(
+        (tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8")
+    )
     assert "eve-memory" not in settings_payload.get("mcpServers", {})
     assert "hooks" not in settings_payload or not settings_payload["hooks"]
 
 
-def test_uninstall_refuses_user_modified_eve_json_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_refuses_user_modified_eve_json_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -179,7 +197,9 @@ def test_uninstall_refuses_user_modified_eve_json_entry(tmp_path: Path, monkeypa
     assert "claude-code:api-key" not in keyring_state
 
 
-def test_uninstall_refuses_tampered_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_refuses_tampered_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -197,7 +217,10 @@ def test_uninstall_refuses_tampered_manifest(tmp_path: Path, monkeypatch: pytest
             provided_api_keys={"claude-code": "eve-secret"},
         )
         manifest_file = manifest_path(_config(tmp_path).state_dir)
-        manifest_file.write_text(manifest_file.read_text(encoding="utf-8").replace("sha256", "tampered"), encoding="utf-8")
+        manifest_file.write_text(
+            manifest_file.read_text(encoding="utf-8").replace("sha256", "tampered"),
+            encoding="utf-8",
+        )
         with pytest.raises(Exception):
             uninstall_tools(
                 config=_config(tmp_path),

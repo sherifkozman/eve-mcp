@@ -78,7 +78,9 @@ def start_auth0_device_authorization(
     device_code = response.get("device_code")
     user_code = response.get("user_code")
     verification_uri = response.get("verification_uri")
-    if not all(isinstance(value, str) and value for value in (device_code, user_code, verification_uri)):
+    if not all(
+        isinstance(value, str) and value for value in (device_code, user_code, verification_uri)
+    ):
         raise OAuthDeviceFlowError("Device authorization response is missing required fields")
     verification_uri_complete = response.get("verification_uri_complete")
     expires_in = response.get("expires_in")
@@ -87,7 +89,9 @@ def start_auth0_device_authorization(
         device_code=device_code,
         user_code=user_code,
         verification_uri=verification_uri,
-        verification_uri_complete=verification_uri_complete if isinstance(verification_uri_complete, str) else None,
+        verification_uri_complete=verification_uri_complete
+        if isinstance(verification_uri_complete, str)
+        else None,
         expires_in=expires_in if isinstance(expires_in, int) and expires_in > 0 else 600,
         interval=interval if isinstance(interval, int) and interval > 0 else 5,
     )
@@ -118,7 +122,10 @@ def poll_auth0_device_token(
         except OAuthDeviceFlowError as exc:
             message = str(exc)
             normalized = message.lower().replace("-", "_").replace(" ", "_")
-            if "authorization_pending" in normalized or "yet_to_authorize_device_code" in normalized:
+            if (
+                "authorization_pending" in normalized
+                or "yet_to_authorize_device_code" in normalized
+            ):
                 time.sleep(current_interval)
                 continue
             if "slow_down" in normalized:
@@ -126,7 +133,9 @@ def poll_auth0_device_token(
                 time.sleep(current_interval)
                 continue
             if "expired_token" in normalized:
-                raise OAuthDeviceFlowError("Device authorization expired before completion") from None
+                raise OAuthDeviceFlowError(
+                    "Device authorization expired before completion"
+                ) from None
             raise
         access_token = response.get("access_token")
         token_type = response.get("token_type")
@@ -134,8 +143,12 @@ def poll_auth0_device_token(
             raise OAuthDeviceFlowError("OAuth token response did not include an access token")
         return DeviceTokenResult(
             access_token=access_token,
-            refresh_token=response.get("refresh_token") if isinstance(response.get("refresh_token"), str) else None,
-            expires_in=response.get("expires_in") if isinstance(response.get("expires_in"), int) else None,
+            refresh_token=response.get("refresh_token")
+            if isinstance(response.get("refresh_token"), str)
+            else None,
+            expires_in=response.get("expires_in")
+            if isinstance(response.get("expires_in"), int)
+            else None,
             token_type=token_type if isinstance(token_type, str) and token_type else "Bearer",
             scope=response.get("scope") if isinstance(response.get("scope"), str) else None,
         )
@@ -164,8 +177,12 @@ def refresh_auth0_token(
         raise OAuthDeviceFlowError("Refresh response did not include an access token")
     return DeviceTokenResult(
         access_token=access_token,
-        refresh_token=response.get("refresh_token") if isinstance(response.get("refresh_token"), str) else refresh_token,
-        expires_in=response.get("expires_in") if isinstance(response.get("expires_in"), int) else None,
+        refresh_token=response.get("refresh_token")
+        if isinstance(response.get("refresh_token"), str)
+        else refresh_token,
+        expires_in=response.get("expires_in")
+        if isinstance(response.get("expires_in"), int)
+        else None,
         token_type=token_type if isinstance(token_type, str) and token_type else "Bearer",
         scope=response.get("scope") if isinstance(response.get("scope"), str) else None,
     )

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from eve_client.auth.base import CredentialStore
 from eve_client.config import ResolvedConfig

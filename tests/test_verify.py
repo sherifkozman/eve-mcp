@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
 import io
 import json
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from eve_client.apply import apply_install_plan
-from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.auth.base import CredentialStoreUnavailableError
+from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
-from eve_client.plan import build_install_plan
 from eve_client.merge import source_agent_header
+from eve_client.plan import build_install_plan
 from eve_client.verify import verify_connectivity, verify_tools
 
 
@@ -30,8 +29,12 @@ def patched_keyring(state: dict[str, str] | None = None):
         state[key_name] = secret
 
     with ExitStack() as stack:
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password))
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password))
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password)
+        )
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password)
+        )
         yield state
 
 
@@ -58,7 +61,7 @@ class _FakeResponse:
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -89,7 +92,9 @@ def test_verify_connectivity_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["tool_names"] == ["memory_store", "memory_search"]
 
 
-def test_verify_connectivity_oauth_without_secret_uses_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_connectivity_oauth_without_secret_uses_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_urlopen(request, timeout=10.0):  # noqa: ARG001
         assert request.full_url.endswith("/.well-known/oauth-protected-resource")
         return _FakeResponse(
@@ -105,7 +110,9 @@ def test_verify_connectivity_oauth_without_secret_uses_metadata(monkeypatch: pyt
     assert result["mode"] == "oauth-metadata"
 
 
-def test_verify_connectivity_oauth_without_secret_strips_mcp_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_connectivity_oauth_without_secret_strips_mcp_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def fake_urlopen(request, timeout=10.0):  # noqa: ARG001
         assert request.full_url == "https://mcp.evemem.com/.well-known/oauth-protected-resource"
         return _FakeResponse(
@@ -116,7 +123,9 @@ def test_verify_connectivity_oauth_without_secret_strips_mcp_suffix(monkeypatch:
         )
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    result = verify_connectivity("https://mcp.evemem.com/mcp", None, "claude-code", auth_mode="oauth")
+    result = verify_connectivity(
+        "https://mcp.evemem.com/mcp", None, "claude-code", auth_mode="oauth"
+    )
     assert result["success"] is True
 
 
@@ -143,7 +152,9 @@ def test_source_agent_header_is_strictly_sanitized() -> None:
         source_agent_header("bad\r\nagent")  # type: ignore[arg-type]
 
 
-def test_verify_tools_reports_missing_credential(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_reports_missing_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -151,12 +162,16 @@ def test_verify_tools_reports_missing_credential(tmp_path: Path, monkeypatch: py
         patched_keyring({}),
     ):
         detected = detect_tools(only=["claude-code"])
-        results = verify_tools(detected, _config(tmp_path), LocalCredentialStore(_config(tmp_path).state_dir))
+        results = verify_tools(
+            detected, _config(tmp_path), LocalCredentialStore(_config(tmp_path).state_dir)
+        )
     assert results[0]["eve_configured"] is False
     assert results[0]["connectivity"]["error"] == "credential missing"
 
 
-def test_verify_tools_handles_unavailable_credential_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_handles_unavailable_credential_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
 
     class _UnavailableCredentialStore:
@@ -173,7 +188,9 @@ def test_verify_tools_handles_unavailable_credential_store(tmp_path: Path, monke
     assert results[0]["connectivity"]["error"] == "credential missing"
 
 
-def test_verify_tools_reports_live_connectivity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_reports_live_connectivity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     payloads = [
@@ -205,7 +222,9 @@ def test_verify_tools_reports_live_connectivity(tmp_path: Path, monkeypatch: pyt
     assert results[0]["connectivity"]["success"] is True
 
 
-def test_verify_tools_for_codex_waits_for_local_config_before_connecting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_for_codex_waits_for_local_config_before_connecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     called = False
 
@@ -221,13 +240,17 @@ def test_verify_tools_for_codex_waits_for_local_config_before_connecting(tmp_pat
         patched_keyring({"codex-cli:api-key": "eve-secret"}),
     ):
         detected = detect_tools(only=["codex-cli"])
-        results = verify_tools(detected, _config(tmp_path), LocalCredentialStore(_config(tmp_path).state_dir))
+        results = verify_tools(
+            detected, _config(tmp_path), LocalCredentialStore(_config(tmp_path).state_dir)
+        )
     assert results[0]["feature_enabled"] is True
     assert results[0]["connectivity"]["error"] == "Eve config entry missing"
     assert called is False
 
 
-def test_verify_tools_for_codex_oauth_does_not_require_local_credential(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_for_codex_oauth_does_not_require_local_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     config = _config(tmp_path)
     with (
@@ -244,13 +267,17 @@ def test_verify_tools_for_codex_oauth_does_not_require_local_credential(tmp_path
             credential_store,
             auth_overrides={"codex-cli": "oauth"},
         )
-        results = verify_tools(detected, config, credential_store, auth_overrides={"codex-cli": "oauth"})
+        results = verify_tools(
+            detected, config, credential_store, auth_overrides={"codex-cli": "oauth"}
+        )
     assert results[0]["eve_configured"] is True
     assert results[0]["connectivity"]["error"] == "credential missing"
     assert results[0]["state"] == "enabled_unconfigured"
 
 
-def test_verify_tools_reports_codex_disabled_without_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_tools_reports_codex_disabled_without_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     called = False
 

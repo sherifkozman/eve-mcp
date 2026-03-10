@@ -33,7 +33,11 @@ class ClaudeCodeProvider(ToolProvider):
         companion_path = (
             detected.config_path.parent / "CLAUDE.md"
             if detected.project_scoped
-            else (detected.hooks_path.parent / "CLAUDE.md" if detected.hooks_path else detected.config_path.parent / "CLAUDE.md")
+            else (
+                detected.hooks_path.parent / "CLAUDE.md"
+                if detected.hooks_path
+                else detected.config_path.parent / "CLAUDE.md"
+            )
         )
         return ToolPlan(
             tool=self.tool,

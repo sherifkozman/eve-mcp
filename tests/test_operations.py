@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from eve_client.config import ResolvedConfig
 from eve_client.models import PlannedAction
 from eve_client.operations import OperationContext, OperationError, execute_operation
@@ -55,7 +54,14 @@ def test_execute_auth_setup_requires_api_key(tmp_path: Path) -> None:
         idempotent=True,
     )
     with pytest.raises(OperationError):
-        execute_operation(OperationContext(config=_config(tmp_path), credentials=_CredentialStore(), action=action, api_key=None))
+        execute_operation(
+            OperationContext(
+                config=_config(tmp_path),
+                credentials=_CredentialStore(),
+                action=action,
+                api_key=None,
+            )
+        )
 
 
 def test_execute_auth_setup_reuses_stored_key_when_api_key_not_provided(tmp_path: Path) -> None:
@@ -71,7 +77,9 @@ def test_execute_auth_setup_reuses_stored_key_when_api_key_not_provided(tmp_path
         idempotent=True,
     )
     store = _CredentialStore(api_key="eve-secret")
-    execute_operation(OperationContext(config=_config(tmp_path), credentials=store, action=action, api_key=None))
+    execute_operation(
+        OperationContext(config=_config(tmp_path), credentials=store, action=action, api_key=None)
+    )
     assert store.stored["claude-code"] == "eve-secret"
 
 

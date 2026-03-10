@@ -7,12 +7,11 @@ supported IDE: Claude Code, Gemini CLI, and Codex CLI.
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
-import tomllib
 import pytest
-
 from eve_client.detect.base import detect_tools
 from eve_client.integrations.claude_code import ClaudeCodeProvider
 from eve_client.integrations.codex_cli import CodexCliProvider
@@ -28,7 +27,6 @@ from eve_client.merge import (
     merge_toml_config,
 )
 from eve_client.models import DetectedTool
-
 
 # ---------------------------------------------------------------------------
 # Chunk 1: Config File Placement and Merge Tests

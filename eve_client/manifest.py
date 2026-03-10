@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 from pathlib import Path
 
-from eve_client.integrity import HMAC_ALGORITHM, IntegrityKeyError, compute_payload_digest, get_or_create_integrity_key, sign_payload, verify_signature
+from eve_client.integrity import (
+    HMAC_ALGORITHM,
+    IntegrityKeyError,
+    compute_payload_digest,
+    get_or_create_integrity_key,
+    sign_payload,
+    verify_signature,
+)
 from eve_client.state_binding import (
     StateBindingError,
     get_or_create_installation_id,
     store_sequence_watermark,
     verify_sequence_watermark,
 )
+
 from .models import ManifestRecord
 from .safe_fs import SafeFS
 from .state_dir import ensure_private_state_dir
@@ -43,11 +51,15 @@ def _empty_envelope() -> dict[str, object]:
     }
 
 
-def load_manifest_envelope(state_dir: Path, *, allow_file_fallback: bool = False) -> dict[str, object]:
+def load_manifest_envelope(
+    state_dir: Path, *, allow_file_fallback: bool = False
+) -> dict[str, object]:
     ensure_private_state_dir(state_dir)
     path = manifest_path(state_dir)
     try:
-        installation_id = get_or_create_installation_id(state_dir, allow_file_fallback=allow_file_fallback)
+        installation_id = get_or_create_installation_id(
+            state_dir, allow_file_fallback=allow_file_fallback
+        )
     except StateBindingError as exc:
         raise ManifestIntegrityError(str(exc)) from exc
     if not path.exists():
@@ -98,10 +110,14 @@ def load_manifest(state_dir: Path, *, allow_file_fallback: bool = False) -> list
     return [ManifestRecord(**item) for item in payload.get("records", [])]
 
 
-def write_manifest(state_dir: Path, records: list[ManifestRecord], *, allow_file_fallback: bool = False) -> None:
+def write_manifest(
+    state_dir: Path, records: list[ManifestRecord], *, allow_file_fallback: bool = False
+) -> None:
     ensure_private_state_dir(state_dir)
     try:
-        installation_id = get_or_create_installation_id(state_dir, allow_file_fallback=allow_file_fallback)
+        installation_id = get_or_create_installation_id(
+            state_dir, allow_file_fallback=allow_file_fallback
+        )
     except StateBindingError as exc:
         raise ManifestIntegrityError(str(exc)) from exc
     previous = load_manifest_envelope(state_dir, allow_file_fallback=allow_file_fallback)
@@ -112,7 +128,9 @@ def write_manifest(state_dir: Path, records: list[ManifestRecord], *, allow_file
         "hmac_algorithm": HMAC_ALGORITHM,
         "installation_id": installation_id,
         "sequence": int(previous_payload.get("sequence", 0)) + 1,
-        "prev_digest": prev_digest if previous_payload.get("sequence", 0) > 0 or previous_payload.get("records") else None,
+        "prev_digest": prev_digest
+        if previous_payload.get("sequence", 0) > 0 or previous_payload.get("records")
+        else None,
         "records": [asdict(record) for record in records],
     }
     try:

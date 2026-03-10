@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import os
+import time
 from multiprocessing import Event, Process, Queue
 from pathlib import Path
-import time
-import os
 
 import pytest
-
 from eve_client.lock import (
     InstallerLockError,
     InstallerLockUnsupportedPlatformError,
@@ -76,7 +75,9 @@ def test_installer_lock_writes_metadata(tmp_path: Path) -> None:
         assert isinstance(payload.get("started_at"), int)
 
 
-def test_installer_lock_fails_closed_without_fcntl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_installer_lock_fails_closed_without_fcntl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("eve_client.lock.fcntl", None)
     with pytest.raises(InstallerLockUnsupportedPlatformError):
         with installer_lock(tmp_path / ".eve-state"):

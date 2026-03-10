@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from eve_client import gemini_hooks
 
 
@@ -31,8 +30,12 @@ def test_session_start_emits_context(monkeypatch: pytest.MonkeyPatch) -> None:
         return True, {
             "injected_context": {
                 "preferences": [{"category": "editor", "key": "tone", "value": "concise"}],
-                "learned_rules": [{"domain": "workflow", "content": "Check Eve before re-deriving context"}],
-                "recent_episodic": [{"event_type": "decision", "summary": "Moved search to managed MCP"}],
+                "learned_rules": [
+                    {"domain": "workflow", "content": "Check Eve before re-deriving context"}
+                ],
+                "recent_episodic": [
+                    {"event_type": "decision", "summary": "Moved search to managed MCP"}
+                ],
             }
         }
 
@@ -59,7 +62,10 @@ def test_prompt_enrich_emits_relevant_memories(monkeypatch: pytest.MonkeyPatch) 
         lambda: {
             "llm_request": {
                 "messages": [
-                    {"role": "user", "content": "What did we decide about the managed MCP audience and resource URL?"}
+                    {
+                        "role": "user",
+                        "content": "What did we decide about the managed MCP audience and resource URL?",
+                    }
                 ]
             }
         },
@@ -86,7 +92,9 @@ def test_prompt_enrich_emits_relevant_memories(monkeypatch: pytest.MonkeyPatch) 
     assert "https://mcp.evemem.com/mcp" in hook_output["additionalContext"]
 
 
-def test_session_end_ignores_short_or_missing_transcript(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_session_end_ignores_short_or_missing_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     transcript_path = tmp_path / "session.jsonl"
     transcript_path.write_text(
         json.dumps({"role": "user", "content": "short"}) + "\n",
@@ -113,13 +121,22 @@ def test_session_end_ignores_short_or_missing_transcript(monkeypatch: pytest.Mon
     assert payload == {"ok": True}
 
 
-def test_pre_compact_reads_transcript_messages(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_pre_compact_reads_transcript_messages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     transcript_path = tmp_path / "session.jsonl"
     transcript_path.write_text(
         "\n".join(
             [
-                json.dumps({"role": "user", "content": "Need to preserve the prior MCP audience decision."}),
-                json.dumps({"role": "model", "content": "We should keep https://mcp.evemem.com/mcp as the resource."}),
+                json.dumps(
+                    {"role": "user", "content": "Need to preserve the prior MCP audience decision."}
+                ),
+                json.dumps(
+                    {
+                        "role": "model",
+                        "content": "We should keep https://mcp.evemem.com/mcp as the resource.",
+                    }
+                ),
             ]
         )
         + "\n",
@@ -137,11 +154,16 @@ def test_pre_compact_reads_transcript_messages(monkeypatch: pytest.MonkeyPatch, 
         lambda: {"session_id": "session-123", "transcript_path": str(transcript_path)},
     )
 
-    def fake_pre_compact(self, *, session_id: str, messages: list[dict[str, str]]) -> tuple[bool, dict[str, object]]:  # noqa: ANN001
+    def fake_pre_compact(
+        self, *, session_id: str, messages: list[dict[str, str]]
+    ) -> tuple[bool, dict[str, object]]:  # noqa: ANN001
         assert session_id == "session-123"
         assert messages == [
             {"role": "user", "content": "Need to preserve the prior MCP audience decision."},
-            {"role": "assistant", "content": "We should keep https://mcp.evemem.com/mcp as the resource."},
+            {
+                "role": "assistant",
+                "content": "We should keep https://mcp.evemem.com/mcp as the resource.",
+            },
         ]
         return True, {"ok": True}
 
@@ -151,14 +173,31 @@ def test_pre_compact_reads_transcript_messages(monkeypatch: pytest.MonkeyPatch, 
     assert payload == {"ok": True}
 
 
-def test_session_end_extracts_long_transcript(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_session_end_extracts_long_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     transcript_path = tmp_path / "session.jsonl"
     transcript_path.write_text(
         "\n".join(
             [
-                json.dumps({"role": "user", "content": "Please remember the production MCP audience and OAuth fix."}),
-                json.dumps({"role": "assistant", "content": "We fixed the managed MCP audience and tenant setting."}),
-                json.dumps({"role": "user", "content": "Also remember Gemini hooks are now package-managed."}),
+                json.dumps(
+                    {
+                        "role": "user",
+                        "content": "Please remember the production MCP audience and OAuth fix.",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "content": "We fixed the managed MCP audience and tenant setting.",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "role": "user",
+                        "content": "Also remember Gemini hooks are now package-managed.",
+                    }
+                ),
             ]
         )
         + "\n",

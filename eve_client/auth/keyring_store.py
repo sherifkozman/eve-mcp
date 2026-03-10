@@ -5,7 +5,6 @@ from __future__ import annotations
 import keyring
 from keyring.errors import KeyringError, PasswordDeleteError
 
-
 SERVICE_NAME = "eve-client"
 WEAK_BACKEND_MARKERS = ("fail", "plaintext", "chainer", "null")
 

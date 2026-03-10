@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import socket
 import time
+from pathlib import Path
 
 from eve_client.safe_fs import SafeFS
 from eve_client.state_dir import ensure_private_state_dir
@@ -36,7 +36,9 @@ def _timestamp() -> int:
 def write_transaction_state(state_dir: Path, payload: dict[str, object]) -> None:
     ensure_private_state_dir(state_dir)
     existing = load_transaction_state(state_dir) or {}
-    started_at = existing.get("started_at") if isinstance(existing.get("started_at"), int) else _timestamp()
+    started_at = (
+        existing.get("started_at") if isinstance(existing.get("started_at"), int) else _timestamp()
+    )
     enriched = dict(payload)
     enriched.setdefault("pid", os.getpid())
     enriched.setdefault("hostname", socket.gethostname())

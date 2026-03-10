@@ -8,13 +8,14 @@ import zipfile
 from importlib.metadata import version as installed_version
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = REPO_ROOT / "packages" / "client"
 INSTALL_SCRIPT = PACKAGE_ROOT / "scripts" / "install-eve-client.sh"
 
 
-def _run(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    *args: str, cwd: Path | None = None, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(args),
         cwd=str(cwd or REPO_ROOT),
@@ -78,7 +79,9 @@ def test_installed_wheel_exposes_eve_entrypoint_and_module_entrypoint(tmp_path: 
     assert module_result.stdout.strip() == expected
 
 
-def test_install_script_installs_local_package_and_verifies_binary_with_explicit_shadow_override(tmp_path: Path) -> None:
+def test_install_script_installs_local_package_and_verifies_binary_with_explicit_shadow_override(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
@@ -104,7 +107,9 @@ def test_install_script_installs_local_package_and_verifies_binary_with_explicit
         check=True,
         env={**os.environ, **env},
     )
-    uv_bin_dir = _run("uv", "tool", "dir", "--bin", cwd=REPO_ROOT, env={**os.environ, **env}).stdout.strip()
+    uv_bin_dir = _run(
+        "uv", "tool", "dir", "--bin", cwd=REPO_ROOT, env={**os.environ, **env}
+    ).stdout.strip()
     eve_binary = Path(uv_bin_dir) / "eve"
 
     assert "Installed executable:" in install_result.stdout
@@ -124,7 +129,9 @@ def test_install_script_installs_local_package_and_verifies_binary_with_explicit
     assert version_result.stdout.strip() == installed_version("eve-client")
 
 
-def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(tmp_path: Path) -> None:
+def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
@@ -151,11 +158,16 @@ def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(
 
     assert result.returncode != 0
     assert "SECURITY WARNING:" in result.stderr
-    assert "Aborting because a conflicting eve binary is ahead of the installed one on PATH." in result.stderr
+    assert (
+        "Aborting because a conflicting eve binary is ahead of the installed one on PATH."
+        in result.stderr
+    )
     assert "EVE_CLIENT_ALLOW_SHADOWED_BINARY=1" in result.stderr
 
 
-def test_install_script_can_still_force_fail_on_shadowed_binary_override_path(tmp_path: Path) -> None:
+def test_install_script_can_still_force_fail_on_shadowed_binary_override_path(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
@@ -184,7 +196,10 @@ def test_install_script_can_still_force_fail_on_shadowed_binary_override_path(tm
 
     assert result.returncode != 0
     assert "SECURITY WARNING:" in result.stderr
-    assert "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 overrides EVE_CLIENT_ALLOW_SHADOWED_BINARY=1." in result.stderr
+    assert (
+        "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 overrides EVE_CLIENT_ALLOW_SHADOWED_BINARY=1."
+        in result.stderr
+    )
     assert "Aborting because EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 is set." in result.stderr
 
 

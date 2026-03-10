@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 INTEGRATIONS_DIR = Path(__file__).resolve().parents[1] / "eve_client" / "integrations"
 DISALLOWED_IMPORT_PREFIXES = (
     "eve_client.apply",

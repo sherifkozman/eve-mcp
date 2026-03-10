@@ -42,9 +42,11 @@ class LocalClientConfig:
     allow_file_secret_fallback: bool
 
     @classmethod
-    def from_payload(cls, payload: dict[str, object]) -> "LocalClientConfig":
+    def from_payload(cls, payload: dict[str, object]) -> LocalClientConfig:
         raw_version = payload.get("config_version")
-        version = raw_version if isinstance(raw_version, int) and raw_version > 0 else CONFIG_VERSION
+        version = (
+            raw_version if isinstance(raw_version, int) and raw_version > 0 else CONFIG_VERSION
+        )
         raw_mcp_base_url = payload.get("mcp_base_url")
         mcp_base_url = raw_mcp_base_url.strip() if isinstance(raw_mcp_base_url, str) else None
         raw_ui_base_url = payload.get("ui_base_url")
@@ -215,7 +217,9 @@ def _resolved_ui_base_url(value: str) -> tuple[str, str | None]:
     allow_custom = _is_truthy(os.environ.get(ALLOW_CUSTOM_UI_CONFIG_ENV_VAR, ""))
     host = f"[{hostname}]" if ":" in hostname else hostname
     port = parsed.port
-    if (parsed.scheme == "https" and port in {None, 443}) or (parsed.scheme == "http" and port in {None, 80}):
+    if (parsed.scheme == "https" and port in {None, 443}) or (
+        parsed.scheme == "http" and port in {None, 80}
+    ):
         netloc = host
     elif port is not None:
         netloc = f"{host}:{port}"
@@ -224,7 +228,11 @@ def _resolved_ui_base_url(value: str) -> tuple[str, str | None]:
     normalized = urlunparse((parsed.scheme, netloc, "", "", "", ""))
     if normalized in OFFICIAL_UI_ORIGINS:
         return normalized, None
-    is_allowed_local_http = parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1", "::1"}
+    is_allowed_local_http = parsed.scheme == "http" and hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
     if allow_custom and (parsed.scheme == "https" or is_allowed_local_http):
         return normalized, None
     return DEFAULT_UI_BASE_URL, normalized
@@ -239,12 +247,12 @@ def resolve_config(override_mcp_base_url: str | None = None) -> ResolvedConfig:
         or DEFAULT_MCP_BASE_URL
     )
     ui_base_url, blocked_ui_base_url = _resolved_ui_base_url(
-        os.environ.get(UI_CONFIG_ENV_VAR)
-        or local_config.ui_base_url
-        or DEFAULT_UI_BASE_URL
+        os.environ.get(UI_CONFIG_ENV_VAR) or local_config.ui_base_url or DEFAULT_UI_BASE_URL
     )
     environment = "production" if mcp_base_url == DEFAULT_MCP_BASE_URL else "custom"
-    feature_claude_desktop = local_config.feature_claude_desktop or _is_truthy(os.environ.get(FEATURE_FLAG_ENV_VAR, ""))
+    feature_claude_desktop = local_config.feature_claude_desktop or _is_truthy(
+        os.environ.get(FEATURE_FLAG_ENV_VAR, "")
+    )
     codex_disable_env = _is_truthy(os.environ.get(CODEX_DISABLE_ENV_VAR, ""))
     codex_enabled = local_config.codex_enabled and not codex_disable_env
     codex_source = "env" if codex_disable_env else local_config.codex_source
@@ -263,10 +271,9 @@ def resolve_config(override_mcp_base_url: str | None = None) -> ResolvedConfig:
         codex_source=codex_source,
         allow_file_secret_fallback=allow_file_secret_fallback,
         blocked_ui_base_url=blocked_ui_base_url,
-        oauth_domain=(os.environ.get(OAUTH_DOMAIN_ENV_VAR) or DEFAULT_OAUTH_DOMAIN).strip() or DEFAULT_OAUTH_DOMAIN,
-        oauth_client_id=(
-            os.environ.get(OAUTH_CLIENT_ID_ENV_VAR) or DEFAULT_OAUTH_CLIENT_ID
-        ).strip()
+        oauth_domain=(os.environ.get(OAUTH_DOMAIN_ENV_VAR) or DEFAULT_OAUTH_DOMAIN).strip()
+        or DEFAULT_OAUTH_DOMAIN,
+        oauth_client_id=(os.environ.get(OAUTH_CLIENT_ID_ENV_VAR) or DEFAULT_OAUTH_CLIENT_ID).strip()
         or DEFAULT_OAUTH_CLIENT_ID,
     )
 

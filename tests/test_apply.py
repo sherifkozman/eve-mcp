@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, ExitStack
 import json
+import tomllib
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-import tomllib
 import pytest
-
-from eve_client.apply import ApplyPlanError, RollbackConflictError, apply_install_plan, rollback_transaction
+from eve_client.apply import (
+    ApplyPlanError,
+    RollbackConflictError,
+    apply_install_plan,
+    rollback_transaction,
+)
 from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
@@ -30,8 +34,12 @@ def patched_keyring(state: dict[str, str] | None = None):
         state[key_name] = secret
 
     with ExitStack() as stack:
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password))
-        stack.enter_context(patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password))
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.get_password", side_effect=get_password)
+        )
+        stack.enter_context(
+            patch("eve_client.auth.keyring_store.keyring.set_password", side_effect=set_password)
+        )
         yield
 
 
@@ -51,7 +59,9 @@ def _config(tmp_path: Path) -> ResolvedConfig:
     )
 
 
-def test_apply_install_plan_writes_claude_code_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_install_plan_writes_claude_code_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -75,9 +85,13 @@ def test_apply_install_plan_writes_claude_code_files(tmp_path: Path, monkeypatch
     mcp_payload = json.loads(mcp_config_path.read_text(encoding="utf-8"))
     assert mcp_payload["mcpServers"]["eve-memory"]["headers"]["X-API-Key"] == "eve-secret"
     hooks_payload = json.loads(hooks_config_path.read_text(encoding="utf-8"))
-    assert hooks_payload["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith("session_start")
+    assert hooks_payload["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith(
+        "session_start"
+    )
     assert companion.exists()
-    manifest = json.loads((_config(tmp_path).state_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (_config(tmp_path).state_dir / "manifest.json").read_text(encoding="utf-8")
+    )
     assert manifest["payload"]["version"] == 2
     assert manifest["payload"]["sequence"] == 1
     assert len(manifest["payload"]["records"]) == 3
@@ -90,7 +104,9 @@ def test_apply_install_plan_writes_claude_code_files(tmp_path: Path, monkeypatch
     assert load_transaction_state(_config(tmp_path).state_dir) is None
 
 
-def test_apply_install_plan_writes_gemini_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_install_plan_writes_gemini_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -115,7 +131,9 @@ def test_apply_install_plan_writes_gemini_files(tmp_path: Path, monkeypatch: pyt
     assert companion.exists()
 
 
-def test_apply_install_plan_writes_project_scoped_gemini_companion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_install_plan_writes_project_scoped_gemini_companion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -139,7 +157,9 @@ def test_apply_install_plan_writes_project_scoped_gemini_companion(tmp_path: Pat
     assert not (tmp_path / ".gemini" / "GEMINI.md").exists()
 
 
-def test_apply_preserves_existing_active_claude_md_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_preserves_existing_active_claude_md_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     existing_mcp_config = tmp_path / ".claude.json"
     existing_mcp_config.write_text('{"mcpServers": {}}', encoding="utf-8")
@@ -163,7 +183,9 @@ def test_apply_preserves_existing_active_claude_md_content(tmp_path: Path, monke
     mcp_payload = json.loads(existing_mcp_config.read_text(encoding="utf-8"))
     assert mcp_payload["mcpServers"]["eve-memory"]["headers"]["X-API-Key"] == "eve-secret"
     hooks_payload = json.loads(existing_hooks_config.read_text(encoding="utf-8"))
-    assert hooks_payload["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith("session_start")
+    assert hooks_payload["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith(
+        "session_start"
+    )
     assert "user-owned file" in (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
     assert load_transaction_state(_config(tmp_path).state_dir) is None
 
@@ -199,7 +221,9 @@ def test_apply_and_rollback_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert load_transaction_state(_config(tmp_path).state_dir) is None
 
 
-def test_apply_plan_fails_when_codex_steps_exist_but_codex_is_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_plan_fails_when_codex_steps_exist_but_codex_is_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -231,7 +255,9 @@ def test_apply_plan_fails_when_codex_steps_exist_but_codex_is_disabled(tmp_path:
     assert not (tmp_path / ".codex" / "config.toml").exists()
 
 
-def test_apply_plan_preflight_blocks_other_writes_when_codex_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_plan_preflight_blocks_other_writes_when_codex_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
@@ -267,7 +293,9 @@ def test_apply_plan_preflight_blocks_other_writes_when_codex_disabled(tmp_path: 
     assert not (tmp_path / ".codex" / "config.toml").exists()
 
 
-def test_rollback_refuses_to_overwrite_modified_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rollback_refuses_to_overwrite_modified_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -290,7 +318,9 @@ def test_rollback_refuses_to_overwrite_modified_file(tmp_path: Path, monkeypatch
             rollback_transaction(_config(tmp_path), result.transaction_id)
 
 
-def test_rollback_is_all_or_nothing_when_any_file_conflicts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rollback_is_all_or_nothing_when_any_file_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     keyring_state: dict[str, str] = {}
     with (
@@ -318,7 +348,9 @@ def test_rollback_is_all_or_nothing_when_any_file_conflicts(tmp_path: Path, monk
     assert companion_path.read_text(encoding="utf-8") == original_companion
 
 
-def test_apply_rejects_policy_escape_for_companion_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_rejects_policy_escape_for_companion_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),

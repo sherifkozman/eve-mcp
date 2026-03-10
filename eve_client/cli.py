@@ -8,9 +8,9 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.parse import urlencode, urljoin, urlparse
-from typing import Optional
 import webbrowser
+from typing import Optional
+from urllib.parse import urlencode, urljoin, urlparse
 
 import typer
 from rich.console import Console
@@ -70,7 +70,7 @@ def _keyring_health(config) -> dict[str, object]:
     }
 
 
-def _parse_tools(raw_tools: Optional[list[str]]) -> list[str] | None:
+def _parse_tools(raw_tools: list[str] | None) -> list[str] | None:
     if not raw_tools:
         return None
     parsed: list[str] = []
@@ -154,7 +154,7 @@ def _preferred_tool_order(tool_name: str) -> int:
 def _resolve_detected_tools(
     config,
     *,
-    raw_tools: Optional[list[str]] = None,
+    raw_tools: list[str] | None = None,
     project: bool = False,
 ):
     selected_tools = _parse_tools(raw_tools)
@@ -309,7 +309,7 @@ def _login_via_device_flow(
 
 def _load_active_oauth_session(config, tool_name: str) -> tuple[OAuthSession | None, str | None]:
     session, source = _credential_store(config).get_oauth_session(tool_name)  # type: ignore[arg-type]
-    if session and session.expires_at and session.expires_at <= int(time.time()) + 30:
+    if session and session.expires_at and session.expires_at <= int(time.time()) + 30:  # noqa: SIM102
         if session.refresh_token:
             token_result = refresh_auth0_token(
                 domain=config.oauth_domain,
@@ -371,7 +371,7 @@ def _build_quickstart_payload(config, detected, plan):
     }
 
 
-def _selected_detected_tool(config, *, raw_tool: Optional[list[str]] = None, project: bool = False):
+def _selected_detected_tool(config, *, raw_tool: list[str] | None = None, project: bool = False):
     _, detected = _resolve_detected_tools(config, raw_tools=raw_tool, project=project)
     plan = build_install_plan(detected, config)
     by_tool = {tool_plan.tool: tool_plan for tool_plan in plan.tool_plans}
@@ -594,7 +594,7 @@ def version() -> None:
 
 @app.command()
 def quickstart(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
     json_output: bool = typer.Option(False, "--json"),
     project: bool = typer.Option(False, "--project"),
 ) -> None:
@@ -640,12 +640,12 @@ def quickstart(
 
 @app.command()
 def connect(
-    tool: Optional[str] = typer.Option(None, "--tool", "-t"),
-    api_key: Optional[str] = typer.Option(None, "--api-key"),
-    bearer_token: Optional[str] = typer.Option(None, "--bearer-token"),
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode"),
-    prompt_scope: Optional[str] = typer.Option(None, "--prompt-scope"),
-    hooks_enabled: Optional[bool] = typer.Option(None, "--with-hooks/--without-hooks"),
+    tool: str | None = typer.Option(None, "--tool", "-t"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    auth_mode: str | None = typer.Option(None, "--auth-mode"),
+    prompt_scope: str | None = typer.Option(None, "--prompt-scope"),
+    hooks_enabled: bool | None = typer.Option(None, "--with-hooks/--without-hooks"),
     project: bool = typer.Option(False, "--project"),
     open_browser: bool = typer.Option(True, "--open-browser/--no-browser"),
     allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
@@ -803,18 +803,18 @@ def connect(
 
 @app.command()
 def install(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
     all_tools: bool = typer.Option(False, "--all", help="Apply to every detected supported tool."),
     dry_run: bool = typer.Option(True, "--dry-run/--apply"),
     json_output: bool = typer.Option(False, "--json"),
     non_interactive: bool = typer.Option(False, "--non-interactive"),
-    mcp_base_url: Optional[str] = typer.Option(None, "--mcp-base-url"),
+    mcp_base_url: str | None = typer.Option(None, "--mcp-base-url"),
     project: bool = typer.Option(False, "--project"),
-    api_key: Optional[str] = typer.Option(None, "--api-key"),
-    bearer_token: Optional[str] = typer.Option(None, "--bearer-token"),
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode"),
-    prompt_scope: Optional[str] = typer.Option(None, "--prompt-scope"),
-    hooks_enabled: Optional[bool] = typer.Option(None, "--with-hooks/--without-hooks"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    auth_mode: str | None = typer.Option(None, "--auth-mode"),
+    prompt_scope: str | None = typer.Option(None, "--prompt-scope"),
+    hooks_enabled: bool | None = typer.Option(None, "--with-hooks/--without-hooks"),
     allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
     yes: bool = typer.Option(False, "--yes", help="Confirm apply without additional prompt"),
 ) -> None:
@@ -1039,7 +1039,7 @@ def install(
 
 @app.command()
 def status(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Show detected tool and environment status."""
@@ -1130,7 +1130,7 @@ def status(
 
 @app.command()
 def doctor(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
 ) -> None:
     """Check local state without mutating configs."""
     config = resolve_config()
@@ -1216,9 +1216,9 @@ def doctor(
 
 @app.command()
 def verify(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
     json_output: bool = typer.Option(False, "--json"),
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode"),
+    auth_mode: str | None = typer.Option(None, "--auth-mode"),
 ) -> None:
     """Verify local Eve integration state and live MCP connectivity."""
     config = resolve_config()
@@ -1273,12 +1273,12 @@ def verify(
 
 @app.command()
 def repair(
-    tool: Optional[list[str]] = typer.Option(None, "--tool", "-t"),
+    tool: list[str] | None = typer.Option(None, "--tool", "-t"),
     dry_run: bool = typer.Option(True, "--dry-run/--apply"),
     yes: bool = typer.Option(False, "--yes", help="Confirm apply without additional prompt"),
-    api_key: Optional[str] = typer.Option(None, "--api-key"),
-    prompt_scope: Optional[str] = typer.Option(None, "--prompt-scope"),
-    hooks_enabled: Optional[bool] = typer.Option(None, "--with-hooks/--without-hooks"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    prompt_scope: str | None = typer.Option(None, "--prompt-scope"),
+    hooks_enabled: bool | None = typer.Option(None, "--with-hooks/--without-hooks"),
     project: bool = typer.Option(False, "--project"),
     allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
 ) -> None:
@@ -1451,10 +1451,10 @@ app.add_typer(auth_app, name="auth")
 
 @auth_app.command("login")
 def auth_login(
-    tool: Optional[str] = typer.Option(None, "--tool", "-t"),
-    api_key: Optional[str] = typer.Option(None, "--api-key"),
-    bearer_token: Optional[str] = typer.Option(None, "--bearer-token"),
-    auth_mode: Optional[str] = typer.Option(None, "--auth-mode"),
+    tool: str | None = typer.Option(None, "--tool", "-t"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    auth_mode: str | None = typer.Option(None, "--auth-mode"),
     open_browser: bool = typer.Option(True, "--open-browser/--no-browser"),
     allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
 ) -> None:

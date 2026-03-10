@@ -3,9 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from typer.testing import CliRunner
-
 from eve_client.cli import app
+from eve_client.config import ResolvedConfig
 from eve_client.interactive import (
     InteractiveResult,
     is_keyring_available,
@@ -19,7 +18,7 @@ from eve_client.interactive import (
     should_use_interactive,
 )
 from eve_client.models import ApplyResult, DetectedTool, InstallPlan, PlannedAction, ToolPlan
-from eve_client.config import ResolvedConfig
+from typer.testing import CliRunner
 
 
 def _make_detected(name, binary_found=True, config_exists=False):

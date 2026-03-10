@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
 import os
-from pathlib import Path
 import stat
+from dataclasses import dataclass
+from pathlib import Path
 
 from eve_client.atomic import atomic_write
-from eve_client.path_policy import PathPolicy, ensure_existing_file_is_safe, ensure_no_symlink_components, ensure_path_is_safe
+from eve_client.path_policy import (
+    PathPolicy,
+    ensure_existing_file_is_safe,
+    ensure_no_symlink_components,
+    ensure_path_is_safe,
+)
 
 
 @dataclass(slots=True)
@@ -16,7 +22,7 @@ class SafeFS:
     policy: PathPolicy
 
     @classmethod
-    def from_roots(cls, roots: list[Path] | tuple[Path, ...]) -> "SafeFS":
+    def from_roots(cls, roots: list[Path] | tuple[Path, ...]) -> SafeFS:
         return cls(policy=PathPolicy.from_roots(roots))
 
     def ensure_safe(self, path: Path) -> Path:
@@ -48,10 +54,8 @@ class SafeFS:
             with os.fdopen(fd, "r", encoding=encoding) as handle:
                 return handle.read()
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
             raise
         finally:
             os.close(dir_fd)
@@ -64,7 +68,9 @@ class SafeFS:
         permissions: int = 0o600,
     ) -> Path:
         target = self.ensure_safe(path)
-        atomic_write(target, content, permissions=permissions, allowed_roots=list(self.policy.allowed_roots))
+        atomic_write(
+            target, content, permissions=permissions, allowed_roots=list(self.policy.allowed_roots)
+        )
         return target
 
     def delete_file(self, path: Path) -> None:

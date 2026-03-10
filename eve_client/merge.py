@@ -94,10 +94,7 @@ def merge_json_config(
 ) -> str:
     """Merge Eve config into a JSON tool config without disturbing other entries."""
     existing: dict[str, Any]
-    if config_path.exists():
-        existing = json.loads(config_path.read_text(encoding="utf-8"))
-    else:
-        existing = {}
+    existing = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     if not hooks_only:
         existing.setdefault("mcpServers", {})
         existing["mcpServers"].update(
@@ -195,9 +192,11 @@ def merge_toml_config(
                 else f'"X-Source-Agent" = "{_source_agent(tool)}"'
             )
         else:
-            header_fragment = f'"X-API-Key" = "{credential}", "X-Source-Agent" = "{_source_agent(tool)}"'
+            header_fragment = (
+                f'"X-API-Key" = "{credential}", "X-Source-Agent" = "{_source_agent(tool)}"'
+            )
         snippet = (
-            f'{TOML_SECTION_HEADER}\n'
+            f"{TOML_SECTION_HEADER}\n"
             f'url = "{mcp_base_url}"\n'
             f"env_http_headers = {{ {header_fragment} }}\n"
         )
@@ -225,9 +224,9 @@ def eve_toml_entry_has_unknown_fields(config_path: Path) -> bool:
     allowed_prefixes = {
         "url =",
         "startup_timeout_sec =",
-        'env_http_headers = {',
-        'bearer_token_env_var =',
-        "[mcp_servers.\"eve-memory\".http_headers]",
+        "env_http_headers = {",
+        "bearer_token_env_var =",
+        '[mcp_servers."eve-memory".http_headers]',
     }
     for raw_line in section.splitlines()[1:]:
         line = raw_line.strip()
@@ -240,15 +239,16 @@ def eve_toml_entry_has_unknown_fields(config_path: Path) -> bool:
                 return True
             if '"X-API-Key"' not in line and '"Authorization"' not in line:
                 return True
-        if line.startswith("bearer_token_env_var ="):
-            if '"EVE_' not in line:
-                return True
+        if line.startswith("bearer_token_env_var =") and '"EVE_' not in line:
+            return True
     return False
 
 
-def _build_codex_toml_snippet(mcp_base_url: str, credential: str | None, *, auth_mode: AuthMode) -> str:
+def _build_codex_toml_snippet(
+    mcp_base_url: str, credential: str | None, *, auth_mode: AuthMode
+) -> str:
     lines = [
-        f'{TOML_SECTION_HEADER}',
+        f"{TOML_SECTION_HEADER}",
         f'url = "{mcp_base_url}"',
         "startup_timeout_sec = 60",
     ]
@@ -339,13 +339,7 @@ def companion_content(tool: ToolName, mcp_base_url: str) -> str:
             "- Keep entries specific enough to be useful later."
         ),
     }[tool]
-    return (
-        f"{begin}\n"
-        f"# Eve companion\n\n"
-        f"{guidance}\n\n"
-        f"MCP endpoint: `{mcp_base_url}`\n"
-        f"{end}\n"
-    )
+    return f"{begin}\n# Eve companion\n\n{guidance}\n\nMCP endpoint: `{mcp_base_url}`\n{end}\n"
 
 
 def companion_markers(tool: ToolName) -> tuple[str, str]:
@@ -367,7 +361,11 @@ def merge_companion_file(path: Path, tool: ToolName, mcp_base_url: str) -> str:
     content = path.read_text(encoding="utf-8")
     if is_eve_companion_file(path, tool):
         return replace_companion_block(content, tool, block)
-    suffix = "" if not content or content.endswith("\n\n") else ("\n" if content.endswith("\n") else "\n\n")
+    suffix = (
+        ""
+        if not content or content.endswith("\n\n")
+        else ("\n" if content.endswith("\n") else "\n\n")
+    )
     return f"{content}{suffix}{block}"
 
 
@@ -422,7 +420,6 @@ def _build_claude_hook_entries(hook_command: str) -> dict[str, Any]:
 
 
 def _build_gemini_hook_entries(hook_command: str) -> dict[str, Any]:
-
     def command(name: str, event: str, *, timeout: int) -> dict[str, Any]:
         return {
             "name": name,
@@ -433,10 +430,18 @@ def _build_gemini_hook_entries(hook_command: str) -> dict[str, Any]:
         }
 
     return {
-        "SessionStart": [{"hooks": [command("eve-memory-session-start", "session_start", timeout=8000)]}],
-        "BeforeAgent": [{"hooks": [command("eve-memory-prompt-enrich", "prompt_enrich", timeout=8000)]}],
-        "PreCompress": [{"hooks": [command("eve-memory-pre-compress", "pre_compact", timeout=20000)]}],
-        "SessionEnd": [{"hooks": [command("eve-memory-session-end", "session_end", timeout=35000)]}],
+        "SessionStart": [
+            {"hooks": [command("eve-memory-session-start", "session_start", timeout=8000)]}
+        ],
+        "BeforeAgent": [
+            {"hooks": [command("eve-memory-prompt-enrich", "prompt_enrich", timeout=8000)]}
+        ],
+        "PreCompress": [
+            {"hooks": [command("eve-memory-pre-compress", "pre_compact", timeout=20000)]}
+        ],
+        "SessionEnd": [
+            {"hooks": [command("eve-memory-session-end", "session_end", timeout=35000)]}
+        ],
     }
 
 
@@ -460,7 +465,9 @@ def _merge_gemini_hooks(existing: Any, hook_command: str) -> dict[str, Any]:
         current_entries = hooks.get(event_name, [])
         if not isinstance(current_entries, list):
             current_entries = []
-        current_entries = [entry for entry in current_entries if not _is_eve_gemini_hook_entry(entry)]
+        current_entries = [
+            entry for entry in current_entries if not _is_eve_gemini_hook_entry(entry)
+        ]
         current_entries.extend(entries)
         hooks[event_name] = current_entries
     return hooks
@@ -496,7 +503,12 @@ def _has_claude_hook_entries(existing: dict[str, Any]) -> bool:
     hooks = existing.get("hooks")
     if not isinstance(hooks, dict):
         return False
-    return any(_is_eve_hook_entry(entry) for entries in hooks.values() if isinstance(entries, list) for entry in entries)
+    return any(
+        _is_eve_hook_entry(entry)
+        for entries in hooks.values()
+        if isinstance(entries, list)
+        for entry in entries
+    )
 
 
 def _has_gemini_hook_entries(existing: dict[str, Any]) -> bool:
@@ -584,7 +596,9 @@ def claude_hooks_have_unknown_fields(config_path: Path) -> bool:
             if set(hook.keys()) - allowed:
                 return True
             command = str(hook.get("command", ""))
-            if hook.get("type") != "command" or not any(marker in command for marker in CLAUDE_HOOK_MARKERS):
+            if hook.get("type") != "command" or not any(
+                marker in command for marker in CLAUDE_HOOK_MARKERS
+            ):
                 return True
             if event_name in {"SessionStart", "UserPromptSubmit"} and hook.get("timeout") != 5:
                 return True
@@ -600,7 +614,7 @@ def gemini_hooks_have_unknown_fields(config_path: Path) -> bool:
     hooks = existing.get("hooks")
     if not isinstance(hooks, dict):
         return False
-    for event_name, entries in hooks.items():
+    for _event_name, entries in hooks.items():
         if not isinstance(entries, list):
             continue
         for entry in entries:
@@ -618,7 +632,9 @@ def gemini_hooks_have_unknown_fields(config_path: Path) -> bool:
             if set(hook.keys()) - allowed:
                 return True
             command = str(hook.get("command", ""))
-            if hook.get("type") != "command" or not any(marker in command for marker in GEMINI_HOOK_MARKERS):
+            if hook.get("type") != "command" or not any(
+                marker in command for marker in GEMINI_HOOK_MARKERS
+            ):
                 return True
     return False
 

@@ -11,7 +11,13 @@ from eve_client.backup import create_backup, restore_backup, sha256_file, valida
 from eve_client.config import ResolvedConfig
 from eve_client.lock import installer_lock
 from eve_client.manifest import load_manifest, write_manifest
-from eve_client.models import ApplyResult, InstallPlan, ManifestRecord, PlannedAction, RollbackResult
+from eve_client.models import (
+    ApplyResult,
+    InstallPlan,
+    ManifestRecord,
+    PlannedAction,
+    RollbackResult,
+)
 from eve_client.operation_policy import OperationPolicyError, validate_action_policy
 from eve_client.operations import OperationContext, OperationError, execute_operation
 from eve_client.plan import feature_enabled_for_tool
@@ -83,7 +89,12 @@ def _apply_action(
     path = action.path
     created_new_file = not path.exists()
     backup_path, backup_sha256 = (
-        create_backup(path, state_dir=config.state_dir, transaction_id=transaction_id, action_id=action.action_id)
+        create_backup(
+            path,
+            state_dir=config.state_dir,
+            transaction_id=transaction_id,
+            action_id=action.action_id,
+        )
         if action.requires_backup and path.exists()
         else (None, None)
     )
@@ -93,7 +104,9 @@ def _apply_action(
         rendered.content,
         permissions=rendered.permissions or 0o600,
     )
-    if action.action_type == "write_config" and not validate_config(path, action.details["config_format"]):
+    if action.action_type == "write_config" and not validate_config(
+        path, action.details["config_format"]
+    ):
         raise ApplyPlanError(f"Rendered config for {action.tool} failed validation")
 
     return AppliedWrite(
@@ -114,7 +127,9 @@ def _rollback_applied_writes(applied_writes: list[AppliedWrite], config: Resolve
                 allowed_roots=_allowed_roots_for_action(applied.action, config),
             )
         elif applied.created_new_file and applied.path.exists():
-            SafeFS.from_roots(_allowed_roots_for_action(applied.action, config)).delete_file(applied.path)
+            SafeFS.from_roots(_allowed_roots_for_action(applied.action, config)).delete_file(
+                applied.path
+            )
 
 
 def _ensure_record_matches_current_file(record: ManifestRecord) -> None:
@@ -183,11 +198,15 @@ def apply_install_plan(
         for tool_plan in plan.tool_plans:
             if allowed_tools and tool_plan.tool not in allowed_tools:
                 continue
-            if tool_plan.tool == "codex-cli" and not feature_enabled_for_tool(tool_plan.tool, config):
+            if tool_plan.tool == "codex-cli" and not feature_enabled_for_tool(
+                tool_plan.tool, config
+            ):
                 raise ApplyPlanError(
                     "Codex CLI steps are present in this plan, but Codex is disabled at execution time."
                 )
-        all_records = load_manifest(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
+        all_records = load_manifest(
+            config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
+        )
         write_transaction_state(
             config.state_dir,
             {
@@ -254,7 +273,9 @@ def apply_install_plan(
             if tool_plan.actions:
                 applied_tools.append(tool_plan.tool)
 
-        write_manifest(config.state_dir, all_records, allow_file_fallback=config.allow_file_secret_fallback)
+        write_manifest(
+            config.state_dir, all_records, allow_file_fallback=config.allow_file_secret_fallback
+        )
         clear_transaction_state(config.state_dir)
         return ApplyResult(
             transaction_id=transaction_id,
@@ -269,7 +290,9 @@ def rollback_transaction(config: ResolvedConfig, transaction_id: str) -> Rollbac
             config.state_dir,
             {"transaction_id": transaction_id, "phase": "rollback"},
         )
-        records = load_manifest(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
+        records = load_manifest(
+            config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
+        )
         target = [record for record in records if record.transaction_id == transaction_id]
         _preflight_rollback(target)
         restored = 0
@@ -285,7 +308,9 @@ def rollback_transaction(config: ResolvedConfig, transaction_id: str) -> Rollbac
                 restore_backup(Path(record.backup_path), path, allowed_roots=allowed_roots)
                 _verify_restored_target(record)
             elif path.exists():
-                SafeFS.from_roots([config.project_root] if record.scope == "project" else [path.parent]).delete_file(path)
+                SafeFS.from_roots(
+                    [config.project_root] if record.scope == "project" else [path.parent]
+                ).delete_file(path)
             restored += 1
         write_manifest(
             config.state_dir,

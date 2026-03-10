@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from eve_client.state_dir import StateDirSecurityError, ensure_private_state_dir
 
 
@@ -24,7 +23,9 @@ def test_ensure_private_state_dir_rejects_world_writable_parent(tmp_path: Path) 
         ensure_private_state_dir(target)
 
 
-def test_ensure_private_state_dir_accepts_explicit_xdg_anchor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ensure_private_state_dir_accepts_explicit_xdg_anchor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     xdg_state_home = tmp_path / "xdg-state"
     monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state_home))
     target = xdg_state_home / "eve"
