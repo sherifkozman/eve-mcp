@@ -23,7 +23,11 @@ from eve_client.auth import CredentialStoreUnavailableError, LocalCredentialStor
 from eve_client.config import DEFAULT_UI_BASE_URL, resolve_config, update_local_config
 from eve_client.detect import ALL_TOOLS, detect_tools
 from eve_client.integrations import get_adapter
-from eve_client.lock import InstallerLockUnsupportedPlatformError, installer_lock_is_held, read_lock_metadata
+from eve_client.lock import (
+    InstallerLockUnsupportedPlatformError,
+    installer_lock_is_held,
+    read_lock_metadata,
+)
 from eve_client.manifest import ManifestIntegrityError, load_manifest
 from eve_client.oauth_device import (
     OAuthDeviceFlowError,
@@ -52,7 +56,9 @@ MCP_OAUTH_SCOPES = (
 
 
 def _credential_store(config):
-    return LocalCredentialStore(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
+    return LocalCredentialStore(
+        config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
+    )
 
 
 def _keyring_health(config) -> dict[str, object]:
@@ -83,17 +89,29 @@ def _normalize_prompt_scope(prompt_scope: str | None) -> str | None:
     return value
 
 
-def _prompt_scope_overrides_for_tools(selected_tools: list[str] | None, prompt_scope: str | None) -> dict[str, str]:
+def _prompt_scope_overrides_for_tools(
+    selected_tools: list[str] | None, prompt_scope: str | None
+) -> dict[str, str]:
     normalized = _normalize_prompt_scope(prompt_scope)
     if not normalized or not selected_tools:
         return {}
-    return {tool_name: normalized for tool_name in selected_tools if tool_name in {"gemini-cli", "claude-code"}}
+    return {
+        tool_name: normalized
+        for tool_name in selected_tools
+        if tool_name in {"gemini-cli", "claude-code"}
+    }
 
 
-def _hook_overrides_for_tools(selected_tools: list[str] | None, hooks_enabled: bool | None) -> dict[str, bool]:
+def _hook_overrides_for_tools(
+    selected_tools: list[str] | None, hooks_enabled: bool | None
+) -> dict[str, bool]:
     if hooks_enabled is None or not selected_tools:
         return {}
-    return {tool_name: hooks_enabled for tool_name in selected_tools if tool_name in {"gemini-cli", "claude-code"}}
+    return {
+        tool_name: hooks_enabled
+        for tool_name in selected_tools
+        if tool_name in {"gemini-cli", "claude-code"}
+    }
 
 
 def _resolve_gemini_install_options(
@@ -108,11 +126,15 @@ def _resolve_gemini_install_options(
     selected_scope = normalized_scope
     selected_hooks = hooks_enabled
     if _stdin_is_tty() and selected_scope is None:
-        selected_scope = typer.prompt(
-            "Choose Gemini prompt scope (global, project)",
-            default="global",
-            show_default=True,
-        ).strip().lower()
+        selected_scope = (
+            typer.prompt(
+                "Choose Gemini prompt scope (global, project)",
+                default="global",
+                show_default=True,
+            )
+            .strip()
+            .lower()
+        )
         selected_scope = _normalize_prompt_scope(selected_scope)
     if _stdin_is_tty() and selected_hooks is None:
         selected_hooks = typer.confirm("Install Gemini Eve hooks?", default=True)
@@ -172,20 +194,26 @@ def _oauth_tool_next_steps(tool_name: str) -> list[str]:
     if tool_name == "claude-code":
         return [
             "Open Claude Code and use `/mcp` to inspect the Eve connection.",
-            "When Claude prompts to authenticate the Eve MCP server, complete the OAuth flow in your browser.",
-            "Run a small Eve memory store/search round trip to confirm the OAuth session is active.",
+            "When Claude prompts to authenticate the Eve MCP server, "
+            "complete the OAuth flow in your browser.",
+            "Run a small Eve memory store/search round trip to confirm "
+            "the OAuth session is active.",
         ]
     if tool_name == "gemini-cli":
         return [
             "Open Gemini CLI and inspect the Eve MCP connection with `/mcp`.",
-            "When Gemini prompts to authenticate the Eve MCP server, complete the OAuth flow in your browser.",
-            "Run a small Eve memory store/search round trip to confirm the OAuth session is active.",
+            "When Gemini prompts to authenticate the Eve MCP server, "
+            "complete the OAuth flow in your browser.",
+            "Run a small Eve memory store/search round trip to confirm "
+            "the OAuth session is active.",
         ]
     if tool_name == "codex-cli":
         return [
             "Open Codex CLI and inspect the Eve MCP connection.",
-            "If Codex offers OAuth authentication for the Eve MCP server, complete it in the browser.",
-            "Re-run a small Eve memory store/search round trip to confirm the OAuth session is active.",
+            "If Codex offers OAuth authentication for the Eve MCP server, "
+            "complete it in the browser.",
+            "Re-run a small Eve memory store/search round trip to confirm "
+            "the OAuth session is active.",
         ]
     return [
         "Open the tool and inspect the Eve MCP connection.",
@@ -204,7 +232,11 @@ def _print_oauth_guidance(config, tool_name: str, *, open_browser: bool) -> None
         console.print(f"- {step}")
     if open_browser:
         opened = _open_browser(connect_url)
-        console.print("[green]Opened browser.[/green]" if opened else "[yellow]Could not open browser automatically.[/yellow]")
+        console.print(
+            "[green]Opened browser.[/green]"
+            if opened
+            else "[yellow]Could not open browser automatically.[/yellow]"
+        )
 
 
 def _supports_device_flow(tool_name: str) -> bool:
@@ -225,7 +257,9 @@ def _store_oauth_session(config, tool_name: str, token_result) -> tuple[OAuthSes
     return session, record.source
 
 
-def _login_via_device_flow(config, tool_name: str, *, open_browser: bool) -> tuple[OAuthSession, str]:
+def _login_via_device_flow(
+    config, tool_name: str, *, open_browser: bool
+) -> tuple[OAuthSession, str]:
     try:
         device = start_auth0_device_authorization(
             domain=config.oauth_domain,
@@ -243,13 +277,21 @@ def _login_via_device_flow(config, tool_name: str, *, open_browser: bool) -> tup
         console.print(f"Open: [bold]{device.verification_uri_complete}[/bold]")
         if open_browser:
             opened = _open_browser(device.verification_uri_complete)
-            console.print("[green]Opened browser.[/green]" if opened else "[yellow]Could not open browser automatically.[/yellow]")
+            console.print(
+                "[green]Opened browser.[/green]"
+                if opened
+                else "[yellow]Could not open browser automatically.[/yellow]"
+            )
     else:
         console.print(f"Open: [bold]{device.verification_uri}[/bold]")
         console.print(f"Code: [bold]{device.user_code}[/bold]")
         if open_browser:
             opened = _open_browser(device.verification_uri)
-            console.print("[green]Opened browser.[/green]" if opened else "[yellow]Could not open browser automatically.[/yellow]")
+            console.print(
+                "[green]Opened browser.[/green]"
+                if opened
+                else "[yellow]Could not open browser automatically.[/yellow]"
+            )
     console.print("[dim]Waiting for OAuth approval...[/dim]")
     try:
         token_result = poll_auth0_device_token(
@@ -296,11 +338,7 @@ def _build_quickstart_payload(config, detected, plan):
 
     items.sort(key=lambda item: (_preferred_tool_order(str(item["tool"])), str(item["tool"])))
     recommended = next(
-        (
-            item["tool"]
-            for item in items
-            if item["supported"] and item["binary_found"]
-        ),
+        (item["tool"] for item in items if item["supported"] and item["binary_found"]),
         None,
     )
 
@@ -346,7 +384,9 @@ def _selected_detected_tool(config, *, raw_tool: Optional[list[str]] = None, pro
     return detected, plan, candidates
 
 
-def _select_auth_candidate(config, *, requested_tool: str | None, auth_mode: str | None, project: bool = False):
+def _select_auth_candidate(
+    config, *, requested_tool: str | None, auth_mode: str | None, project: bool = False
+):
     detected, plan, candidates = _selected_detected_tool(
         config,
         raw_tool=[requested_tool] if requested_tool else None,
@@ -363,12 +403,16 @@ def _select_auth_candidate(config, *, requested_tool: str | None, auth_mode: str
         selected_auth_mode = selected_auth_mode or requested_plan.auth_mode
         if selected_auth_mode == "oauth":
             if "oauth" not in requested_plan.supported_auth_modes:
-                raise typer.BadParameter(f"{requested_tool} does not support OAuth in the current client rollout.")
+                raise typer.BadParameter(
+                    f"{requested_tool} does not support OAuth in the current client rollout."
+                )
             return requested_detected, requested_plan, selected_auth_mode
         if selected_auth_mode != "api-key":
             raise typer.BadParameter("auth mode must be 'api-key' or 'oauth'")
         if not requested_plan.supported or not requested_detected.binary_found:
-            reason = requested_plan.reason or "Tool is not ready for credential setup on this machine."
+            reason = (
+                requested_plan.reason or "Tool is not ready for credential setup on this machine."
+            )
             raise typer.BadParameter(reason)
         return requested_detected, requested_plan, selected_auth_mode
 
@@ -399,7 +443,9 @@ def _select_auth_candidate(config, *, requested_tool: str | None, auth_mode: str
     if selected_auth_mode and selected_auth_mode != "api-key":
         raise typer.BadParameter("auth mode must be 'api-key' or 'oauth'")
     if not api_candidates:
-        console.print("[yellow]No ready supported tool detected. Run `eve quickstart` for guidance.[/yellow]")
+        console.print(
+            "[yellow]No ready supported tool detected. Run `eve quickstart` for guidance.[/yellow]"
+        )
         raise typer.Exit(1)
     if len(api_candidates) == 1:
         detected_tool, tool_plan = api_candidates[0]
@@ -449,11 +495,7 @@ def _print_tool_actions(tool_plan) -> None:
         console.print(f"- {action.summary}{location}")
 
 
-def _stdin_is_tty() -> bool:
-    try:
-        return bool(sys.stdin.isatty())
-    except Exception:
-        return False
+from eve_client.tty import stdin_is_tty as _stdin_is_tty  # noqa: E402
 
 
 def _print_hosted_endpoint_context(config) -> None:
@@ -482,7 +524,9 @@ def _apply_requested_file_fallback(config, allow_file_fallback: bool):
     return config
 
 
-def _recover_from_unavailable_credential_store(config, tool_name: str, exc: CredentialStoreUnavailableError):
+def _recover_from_unavailable_credential_store(
+    config, tool_name: str, exc: CredentialStoreUnavailableError
+):
     message = (
         f"{exc} Use a desktop keyring when available, or enable Eve's file fallback for "
         "headless Linux machines."
@@ -490,7 +534,9 @@ def _recover_from_unavailable_credential_store(config, tool_name: str, exc: Cred
     if not _stdin_is_tty():
         raise typer.BadParameter(message) from exc
     console.print(f"[yellow]{message}[/yellow]")
-    if not typer.confirm(f"Enable file-based Eve credential fallback for {tool_name} on this machine?"):
+    if not typer.confirm(
+        f"Enable file-based Eve credential fallback for {tool_name} on this machine?"
+    ):
         raise typer.Exit(1) from exc
     return _enable_file_fallback(config)
 
@@ -565,7 +611,9 @@ def quickstart(
     console.print(Panel("[bold]Eve Quickstart[/bold]", style="green"))
     console.print(f"MCP endpoint: [bold]{payload['mcp_base_url']}[/bold]")
     if payload["recommended_tool"]:
-        console.print(f"Best first tool on this machine: [bold]{payload['recommended_tool']}[/bold]")
+        console.print(
+            f"Best first tool on this machine: [bold]{payload['recommended_tool']}[/bold]"
+        )
     else:
         console.print("[yellow]No ready supported tool detected yet.[/yellow]")
 
@@ -625,10 +673,14 @@ def connect(
         detected,
         config,
         auth_overrides={detected_tool.name: selected_auth_mode},
-        prompt_scope_overrides=_prompt_scope_overrides_for_tools([detected_tool.name], prompt_scope),
+        prompt_scope_overrides=_prompt_scope_overrides_for_tools(
+            [detected_tool.name], prompt_scope
+        ),
         hook_overrides=_hook_overrides_for_tools([detected_tool.name], hooks_enabled),
     )
-    selected_tool_plan = next(tool for tool in selected_plan.tool_plans if tool.tool == detected_tool.name)
+    selected_tool_plan = next(
+        tool for tool in selected_plan.tool_plans if tool.tool == detected_tool.name
+    )
 
     console.print(Panel("[bold]Eve Connect[/bold]", style="green"))
     console.print(f"Tool: [bold]{detected_tool.name}[/bold]")
@@ -645,10 +697,14 @@ def connect(
             _print_oauth_guidance(config, detected_tool.name, open_browser=open_browser)
             return
         if "oauth" not in selected_tool_plan.supported_auth_modes:
-            raise typer.BadParameter(f"{detected_tool.name} does not support OAuth in the current client rollout.")
+            raise typer.BadParameter(
+                f"{detected_tool.name} does not support OAuth in the current client rollout."
+            )
         if not yes and not _stdin_is_tty():
             raise typer.BadParameter("--yes is required in non-interactive mode.")
-        if not yes and not typer.confirm(f"Apply Eve OAuth configuration for {detected_tool.name}?"):
+        if not yes and not typer.confirm(
+            f"Apply Eve OAuth configuration for {detected_tool.name}?"
+        ):
             raise typer.Exit(1)
         credential_store = _credential_store(config)
         result = apply_install_plan(
@@ -659,12 +715,20 @@ def connect(
             auth_overrides={detected_tool.name: selected_auth_mode},
             allowed_tools=[detected_tool.name],
         )
-        verify_result = verify_tools([detected_tool], config, credential_store, auth_overrides={detected_tool.name: selected_auth_mode})[0]
-        console.print(f"[green]Connected.[/green] Transaction: [bold]{result.transaction_id}[/bold]")
+        verify_result = verify_tools(
+            [detected_tool],
+            config,
+            credential_store,
+            auth_overrides={detected_tool.name: selected_auth_mode},
+        )[0]
+        console.print(
+            f"[green]Connected.[/green] Transaction: [bold]{result.transaction_id}[/bold]"
+        )
         if verify_result["connectivity"]["success"]:
             console.print("[green]Verification succeeded.[/green]")
         else:
-            console.print(f"[yellow]Verification requires follow-up:[/yellow] {verify_result['connectivity']['error']}")
+            err = verify_result["connectivity"]["error"]
+            console.print(f"[yellow]Verification requires follow-up:[/yellow] {err}")
         if not bearer_token and _supports_device_flow(detected_tool.name):
             try:
                 _login_via_device_flow(config, detected_tool.name, open_browser=open_browser)
@@ -673,11 +737,20 @@ def connect(
                 credential_store = _credential_store(config)
                 _login_via_device_flow(config, detected_tool.name, open_browser=open_browser)
             credential_store = _credential_store(config)
-            verify_result = verify_tools([detected_tool], config, credential_store, auth_overrides={detected_tool.name: selected_auth_mode})[0]
+            verify_result = verify_tools(
+                [detected_tool],
+                config,
+                credential_store,
+                auth_overrides={detected_tool.name: selected_auth_mode},
+            )[0]
             if verify_result["connectivity"]["success"]:
                 console.print("[green]OAuth verification succeeded.[/green]")
             else:
-                console.print(f"[yellow]OAuth verification requires follow-up:[/yellow] {verify_result['connectivity']['error']}")
+                oauth_err = verify_result["connectivity"]["error"]
+                console.print(
+                    f"[yellow]OAuth verification requires follow-up:[/yellow] "
+                    f"{oauth_err}"
+                )
         elif not bearer_token:
             _print_oauth_guidance(config, detected_tool.name, open_browser=open_browser)
         return
@@ -708,7 +781,9 @@ def connect(
             detected,
             config,
             auth_overrides={detected_tool.name: selected_auth_mode},
-            prompt_scope_overrides=_prompt_scope_overrides_for_tools([detected_tool.name], prompt_scope),
+            prompt_scope_overrides=_prompt_scope_overrides_for_tools(
+                [detected_tool.name], prompt_scope
+            ),
             hook_overrides=_hook_overrides_for_tools([detected_tool.name], hooks_enabled),
         )
         result = apply_install_plan(
@@ -723,7 +798,10 @@ def connect(
     if verify_result["connectivity"]["success"]:
         console.print("[green]Verification succeeded.[/green]")
     else:
-        console.print(f"[yellow]Verification requires follow-up:[/yellow] {verify_result['connectivity']['error']}")
+        conn_err = verify_result["connectivity"]["error"]
+        console.print(
+            f"[yellow]Verification requires follow-up:[/yellow] {conn_err}"
+        )
 
 
 @app.command()
@@ -749,15 +827,117 @@ def install(
     if non_interactive and not dry_run and not yes:
         raise typer.BadParameter("Non-interactive apply requires --yes.")
 
+    # Interactive flow: guided prompts when TTY, no --tool, no --all
+    from eve_client.interactive import (  # noqa: PLC0415
+        preview_and_confirm,
+        run_interactive_install,
+        should_use_interactive,
+    )
+
+    if should_use_interactive(tool_flag=tool, all_flag=all_tools, non_interactive=non_interactive):
+        config = resolve_config(override_mcp_base_url=mcp_base_url)
+        _, detected = _resolve_detected_tools(config, raw_tools=None, project=project)
+        interactive_result = run_interactive_install(detected)
+        if interactive_result is None:
+            raise typer.Exit(1)
+
+        if interactive_result.uninstall_tools:
+            credential_store = _credential_store(config)
+            uninstall_tools(
+                config=config,
+                credential_store=credential_store,
+                tools=interactive_result.uninstall_tools,  # type: ignore[arg-type]
+            )
+            console.print(
+                f"[green]Uninstalled:[/green] {', '.join(interactive_result.uninstall_tools)}"
+            )
+            if not interactive_result.selected_tools:
+                return
+
+        plan = build_install_plan(
+            detected,
+            config,
+            auth_overrides=interactive_result.auth_overrides,
+            prompt_scope_overrides=interactive_result.prompt_scope_overrides,
+            hook_overrides=interactive_result.hook_overrides,
+        )
+        if json_output:
+            console.print_json(json.dumps(plan.to_dict()))
+            return
+        if not preview_and_confirm(plan):
+            raise typer.Exit(1)
+        config = _apply_requested_file_fallback(config, allow_file_fallback)
+        plan = build_install_plan(
+            detected,
+            config,
+            auth_overrides=interactive_result.auth_overrides,
+            prompt_scope_overrides=interactive_result.prompt_scope_overrides,
+            hook_overrides=interactive_result.hook_overrides,
+        )
+        credential_store = _credential_store(config)
+        try:
+            result = apply_install_plan(
+                plan,
+                config,
+                credential_store,
+                provided_secrets=interactive_result.provided_secrets,
+                auth_overrides=interactive_result.auth_overrides,
+                allowed_tools=interactive_result.selected_tools,
+            )
+        except CredentialStoreUnavailableError as exc:
+            first_tool = interactive_result.selected_tools[0]
+            config = _recover_from_unavailable_credential_store(config, first_tool, exc)
+            credential_store = _credential_store(config)
+            plan = build_install_plan(
+                detected,
+                config,
+                auth_overrides=interactive_result.auth_overrides,
+                prompt_scope_overrides=interactive_result.prompt_scope_overrides,
+                hook_overrides=interactive_result.hook_overrides,
+            )
+            result = apply_install_plan(
+                plan,
+                config,
+                credential_store,
+                provided_secrets=interactive_result.provided_secrets,
+                auth_overrides=interactive_result.auth_overrides,
+                allowed_tools=interactive_result.selected_tools,
+            )
+        console.print(
+            f"\n[green]Applied.[/green] Transaction: [bold]{result.transaction_id}[/bold]"
+        )
+        verify_results = verify_tools(
+            detected,
+            config,
+            credential_store,
+            auth_overrides=interactive_result.auth_overrides,
+        )
+        all_ok = all(v.get("connectivity", {}).get("success") for v in verify_results)
+        if all_ok:
+            console.print("[green]Verification passed.[/green]")
+        else:
+            console.print("[yellow]Verification issues:[/yellow]")
+            for v in verify_results:
+                if not v.get("connectivity", {}).get("success"):
+                    reason = v.get("connectivity", {}).get("error", "unknown")
+                    console.print(f"  - {v['tool']}: {reason}")
+        return
+
     config = resolve_config(override_mcp_base_url=mcp_base_url)
-    selected_tools, detected = _resolve_detected_tools(config, raw_tools=None if all_tools else tool, project=project)
+    selected_tools, detected = _resolve_detected_tools(
+        config, raw_tools=None if all_tools else tool, project=project
+    )
     if selected_tools == ["gemini-cli"]:
         prompt_scope, hooks_enabled = _resolve_gemini_install_options(
             "gemini-cli",
             prompt_scope=prompt_scope,
             hooks_enabled=hooks_enabled,
         )
-    auth_overrides = {tool_name: auth_mode for tool_name in selected_tools or []} if auth_mode in {"api-key", "oauth"} and selected_tools else {}
+    auth_overrides = (
+        {tool_name: auth_mode for tool_name in selected_tools or []}
+        if auth_mode in {"api-key", "oauth"} and selected_tools
+        else {}
+    )
     plan = build_install_plan(
         detected,
         config,
@@ -796,7 +976,9 @@ def install(
     if dry_run:
         console.print("\n[dim]Dry run only. Re-run with --apply to execute after review.[/dim]")
         if not selected_tools and not all_tools:
-            console.print("[dim]Tip: use eve quickstart for a faster first-run recommendation.[/dim]")
+            console.print(
+                "[dim]Tip: use eve quickstart for a faster first-run recommendation.[/dim]"
+            )
         return
 
     if not yes and not typer.confirm("Apply this plan?"):
@@ -898,16 +1080,23 @@ def status(
     if pending:
         console.print(f"[yellow]Pending transaction:[/yellow] {pending}")
         if not lock_held:
-            console.print("[yellow]Recovery hint:[/yellow] no active installer lock is held; the previous run likely terminated unexpectedly.")
+            console.print(
+                "[yellow]Recovery hint:[/yellow] no active installer lock is held; "
+                "the previous run likely terminated unexpectedly."
+            )
     if lock_error:
         console.print(f"[yellow]Locking:[/yellow] {lock_error}")
     if manifest_status != "ok":
         console.print(f"[yellow]Trust state:[/yellow] {manifest_status}")
     if payload["keyring"]["low_assurance"]:
-        console.print(f"[yellow]Keyring backend:[/yellow] {payload['keyring']['backend']} (low assurance)")
+        console.print(
+            f"[yellow]Keyring backend:[/yellow] {payload['keyring']['backend']} (low assurance)"
+        )
         if not config.allow_file_secret_fallback:
             console.print(
-                "[yellow]Headless setup hint:[/yellow] Eve can enable encrypted file fallback during `eve connect` or `eve auth login` if no system keyring is available."
+                "[yellow]Headless setup hint:[/yellow] Eve can enable encrypted file "
+                "fallback during `eve connect` or `eve auth login` if no system keyring "
+                "is available."
             )
     elif config.allow_file_secret_fallback:
         console.print("[yellow]File secret fallback:[/yellow] enabled")
@@ -950,16 +1139,24 @@ def doctor(
     try:
         load_manifest(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
     except ManifestIntegrityError as exc:
-        problems.append(f"trust-state: {exc}. Run 'eve trust reinit --yes' after reviewing local state.")
+        problems.append(
+            f"trust-state: {exc}. Run 'eve trust reinit --yes' after reviewing local state."
+        )
     if pending_transaction and not lock_held:
-        problems.append("transaction-state: interrupted installer run detected with no active lock; recover or reinitialize trust state before applying again")
+        problems.append(
+            "transaction-state: interrupted installer run detected with no active lock; "
+            "recover or reinitialize trust state before applying again"
+        )
     if keyring_health["low_assurance"]:
         problems.append(
             f"keyring: low-assurance backend detected ({keyring_health['backend']}); "
             "use a desktop keyring or enable Eve file fallback during auth/connect"
         )
     if config.allow_file_secret_fallback:
-        problems.append("credentials: file fallback is enabled; this weakens local secret and trust-anchor protection")
+        problems.append(
+            "credentials: file fallback is enabled; this weakens local secret "
+            "and trust-anchor protection"
+        )
     codex_warning = _legacy_codex_warning(config)
     for detected_tool in detected:
         if detected_tool.name == "codex-cli":
@@ -1024,7 +1221,9 @@ def verify(
         if auth_mode in {"api-key", "oauth"} and selected_tools
         else {}
     )
-    results = verify_tools(detected, config, _credential_store(config), auth_overrides=auth_overrides)
+    results = verify_tools(
+        detected, config, _credential_store(config), auth_overrides=auth_overrides
+    )
     if json_output:
         console.print_json(json.dumps(results))
         return
@@ -1095,7 +1294,11 @@ def repair(
         console.print(Panel("[bold]Eve Repair Plan[/bold]", style="magenta"))
         for item in verification:
             status = "ok"
-            if not item["eve_configured"] or not item["companion_present"] or not item["connectivity"]["success"]:
+            if (
+                not item["eve_configured"]
+                or not item["companion_present"]
+                or not item["connectivity"]["success"]
+            ):
                 status = "repair suggested"
             console.print(f"- {item['tool']}: {status}")
         console.print("[dim]Dry run only. Re-run with --apply to execute repairs.[/dim]")
@@ -1174,7 +1377,9 @@ def uninstall(
                 "[yellow]These files may still contain Eve configuration or credentials. "
                 "Review them before considering Eve fully removed.[/yellow]"
             )
-        console.print("[yellow]Stored credentials for the selected tool(s) were still removed.[/yellow]")
+        console.print(
+            "[yellow]Stored credentials for the selected tool(s) were still removed.[/yellow]"
+        )
         raise typer.Exit(1) from exc
     console.print(
         f"[green]Uninstalled.[/green] Transaction: [bold]{result.transaction_id}[/bold] "
@@ -1198,7 +1403,10 @@ def run(
     config = resolve_config()
     session, _source = _load_active_oauth_session(config, tool)
     if session is None:
-        console.print("[yellow]No stored OAuth session for codex-cli. Run `eve auth login --tool codex-cli --auth-mode oauth` first.[/yellow]")
+        console.print(
+            "[yellow]No stored OAuth session for codex-cli. "
+            "Run `eve auth login --tool codex-cli --auth-mode oauth` first.[/yellow]"
+        )
         raise typer.Exit(1)
     codex_path = shutil.which("codex")
     if not codex_path:
@@ -1220,9 +1428,11 @@ def trust_reinit(
 ) -> None:
     """Reinitialize installer trust state after keyring/disk desync or local corruption."""
     config = resolve_config()
-    if not yes and not typer.confirm("Reinitialize Eve trust state? This clears manifests, backups, and transaction state."):
+    if not yes and not typer.confirm(
+        "Reinitialize Eve trust state? This clears manifests, backups, and transaction state."
+    ):
         raise typer.Exit(1)
-    # Recovery must clear any previously persisted fallback trust state even if fallback is now disabled.
+    # Recovery must clear previously persisted fallback trust state even if fallback is disabled.
     reinitialize_trust_state(config.state_dir, allow_file_fallback=True)
     console.print("[green]Reinitialized[/green] installer trust state.")
 
@@ -1257,7 +1467,10 @@ def auth_login(
             except CredentialStoreUnavailableError as exc:
                 config = _recover_from_unavailable_credential_store(config, tool_name, exc)
                 record = _credential_store(config).set_bearer_token(tool_name, bearer_token)  # type: ignore[arg-type]
-            console.print(f"[green]Stored[/green] {tool_name} credential via {record.source}: {record.value_masked}")
+            console.print(
+                f"[green]Stored[/green] {tool_name} credential "
+                f"via {record.source}: {record.value_masked}"
+            )
             return
         if _supports_device_flow(tool_name):
             try:
@@ -1282,7 +1495,9 @@ def auth_login(
     except CredentialStoreUnavailableError as exc:
         config = _recover_from_unavailable_credential_store(config, tool_name, exc)
         record = _credential_store(config).set_api_key(tool_name, api_key)  # type: ignore[arg-type]
-    console.print(f"[green]Stored[/green] {tool_name} credential via {record.source}: {record.value_masked}")
+    console.print(
+        f"[green]Stored[/green] {tool_name} credential via {record.source}: {record.value_masked}"
+    )
 
 
 @auth_app.command("show")
@@ -1330,7 +1545,9 @@ def rollback(transaction_id: str = typer.Option(..., "--transaction-id")) -> Non
     """Rollback a previously applied transaction."""
     config = resolve_config()
     result = rollback_transaction(config, transaction_id)
-    console.print(f"[green]Rolled back[/green] {result.restored_actions} action(s) from {transaction_id}")
+    console.print(
+        f"[green]Rolled back[/green] {result.restored_actions} action(s) from {transaction_id}"
+    )
 
 
 def main() -> None:
