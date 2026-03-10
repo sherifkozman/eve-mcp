@@ -1,101 +1,119 @@
-# Eve Client
+# Eve MCP Client
 
-Local installer and integration CLI for connecting developer tools to the hosted Eve memory service.
+`eve-client` is the local installer and integration CLI for connecting supported AI tools to the hosted Eve memory service.
+
+It detects local tools, configures MCP, installs Eve-managed prompt and hook files where supported, manages auth, and can verify, repair, or remove the integration later.
 
 ## Install
+
+### From GitHub now
 
 Preferred:
 
 ```bash
-uv tool install eve-client
+uv tool install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
 Alternative:
 
 ```bash
-pipx install eve-client
+pipx install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
-Release helper:
+Bootstrap helper from a clone of this repo:
 
 ```bash
-bash packages/client/scripts/install-eve-client.sh
+bash scripts/install-eve-client.sh
 ```
 
-The helper verifies the installed `eve` executable and prints its resolved path when possible.
-In headless mode it fails closed if a different `eve` binary is ahead of the installed one on `PATH`.
-
-Local repo validation:
+Then confirm:
 
 ```bash
-EVE_CLIENT_SOURCE=packages/client bash packages/client/scripts/install-eve-client.sh
-```
-
-If you need to overwrite an existing local `eve` tool during testing:
-
-```bash
-EVE_CLIENT_SOURCE=packages/client EVE_CLIENT_INSTALL_FLAGS="--force" \
-  bash packages/client/scripts/install-eve-client.sh
-```
-
-If you intentionally need to continue while another `eve` binary is ahead of the installed one on `PATH`:
-
-```bash
-EVE_CLIENT_ALLOW_SHADOWED_BINARY=1 bash packages/client/scripts/install-eve-client.sh
-```
-
-Precedence:
-- default non-interactive behavior fails closed on a shadowed binary
-- `EVE_CLIENT_ALLOW_SHADOWED_BINARY=1` explicitly allows continuing
-- `EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1` always wins and forces failure
-
-Run:
-
-```bash
+eve version
 eve --help
 ```
 
-## What it does
+### From PyPI later
 
-- detects supported local tools
-- shows an explicit install plan before mutating anything
-- writes Eve-managed MCP config and companion files
-- stores local credentials through keyring-first storage
-- verifies, repairs, rolls back, and uninstalls Eve-managed changes
-- removes Eve-owned tool config entries and companion files on uninstall while refusing to delete user-modified Eve-owned files
-
-## Supported rollout
-
-- Claude Code
-- Gemini CLI
-- Codex CLI
-
-Notes:
-
-- Claude Code and Gemini CLI are currently supported on the API-key path.
-- Gemini package installs:
-  - MCP config
-  - package-managed hooks in `~/.gemini/settings.json`
-  - a companion `GEMINI.md` at global or project scope
-- Codex is supported through the Eve-owned OAuth + bearer runtime path.
-- OAuth browser flow exists, but it remains experimental and is not the primary packaged path yet.
-- Claude Desktop is instructional-only for hosted Eve and is not auto-configured locally.
-
-## Common commands
+Once published, the package install will become:
 
 ```bash
-eve quickstart
-eve install --dry-run
-eve install --apply --yes --tool claude-code --api-key <eve-key>
-eve status
-eve doctor
-eve verify
-eve repair --tool gemini-cli --apply --yes
-eve uninstall --tool claude-code --yes
-eve auth login --tool codex-cli --api-key <eve-key>
+uv tool install eve-client
 ```
 
-Recommended first run:
+or:
+
+```bash
+pipx install eve-client
+```
+
+## What Eve Client Does
+
+- detects supported local AI clients
+- shows an install plan before changing files
+- writes Eve-managed MCP config
+- installs prompt/companion files where supported
+- installs hooks where supported
+- stores auth locally using keyring-first storage
+- verifies, repairs, rolls back, and uninstalls Eve-managed changes
+
+## Supported Clients
+
+### Claude Code
+
+Supported today:
+- MCP config
+- `CLAUDE.md` companion file
+- package-managed hooks
+
+Primary auth path today:
+- Eve API key
+
+### Gemini CLI
+
+Supported today:
+- MCP config
+- `GEMINI.md` companion file
+- package-managed hooks
+
+Primary auth path today:
+- Eve API key
+
+### Codex CLI
+
+Supported today:
+- MCP config
+- Eve-owned OAuth login
+- runtime bearer token injection
+
+Primary auth path today:
+- Eve OAuth
+
+Important:
+- native Codex MCP login is **not** the supported Eve path
+
+### Claude Desktop
+
+Not auto-configured locally for hosted Eve.
+
+## Authentication Requirements
+
+You need an Eve workspace and either:
+
+- an Eve API key, or
+- Eve OAuth access for supported flows
+
+Current auth expectations:
+
+- Claude Code: API key
+- Gemini CLI: API key
+- Codex CLI: Eve OAuth
+
+OAuth browser flow exists for more clients, but it is still experimental outside the Codex path and should not be treated as the default production installer flow yet.
+
+## Basic Usage
+
+### First run
 
 ```bash
 eve quickstart
@@ -103,7 +121,7 @@ eve connect --tool claude-code
 eve verify --tool claude-code
 ```
 
-Non-interactive / CI usage:
+### API key flow
 
 ```bash
 eve auth login --tool claude-code --api-key <eve-key>
@@ -111,33 +129,7 @@ eve install --tool claude-code --apply --yes
 eve verify --tool claude-code
 ```
 
-Use `eve install --all --apply --yes` only when you intentionally want to connect every detected supported tool in one pass.
-
-Experimental hosted OAuth flow:
-
-```bash
-eve auth login --auth-mode oauth
-eve auth login --tool claude-desktop --auth-mode oauth
-eve connect --tool claude-desktop --auth-mode oauth
-```
-
-This opens the hosted Eve connection flow in the browser instead of storing a local API key.
-It is not the primary supported installer path yet.
-
-Custom hosted UI endpoints are blocked by default. For local/staging validation, set:
-
-```bash
-export EVE_UI_BASE_URL=http://localhost:3300
-export EVE_ALLOW_CUSTOM_UI_BASE_URL=1
-```
-
-If a custom UI base URL is configured without `EVE_ALLOW_CUSTOM_UI_BASE_URL=1`, OAuth/connect flows fail instead of silently using it.
-
-## Codex support
-
-Codex uses the hosted MCP path through Eve-owned OAuth plus a bearer token injected at runtime.
-
-Typical flow:
+### Codex OAuth flow
 
 ```bash
 eve auth login --tool codex-cli --auth-mode oauth
@@ -145,51 +137,56 @@ eve install --tool codex-cli --auth-mode oauth --apply --yes
 eve verify --tool codex-cli --auth-mode oauth
 ```
 
-For one-off execution through Eve-managed auth:
+### Common commands
 
 ```bash
+eve quickstart
+eve connect
+eve install --dry-run
+eve install --apply --yes --tool claude-code
+eve status
+eve doctor
+eve verify
+eve repair --tool gemini-cli --apply --yes
+eve uninstall --tool claude-code --yes
 eve run --tool codex-cli -- exec "Use Eve memory to search for my latest preference."
 ```
 
-Native Codex MCP login is not the supported path for Eve.
-
-## Safety model
+## Safety Model
 
 - no silent shell profile mutation
 - no undocumented hooks
 - no overwrite of user-authored instruction files
 - backup and manifest tracking before mutation
 - explicit rollback and uninstall support
-- uninstall removes Eve-managed credentials and tool entries, and warns loudly when user-modified Eve files must be reviewed manually
+- uninstall removes Eve-managed credentials and tool entries, and warns when a user-modified Eve-owned file requires manual review
 
 ## Development
 
 Run tests:
 
 ```bash
-uv run --package eve-client pytest --cov=packages/client/eve_client --cov-report=term-missing -q packages/client/tests
+uv run pytest --cov=eve_client --cov-report=term-missing -q tests
 ```
 
-Build artifacts:
+Build Python artifacts:
 
 ```bash
-uv build packages/client
+uv build .
 ```
 
-Check release artifacts:
+Check build artifacts:
 
 ```bash
-uvx twine check dist/eve_client-*.tar.gz dist/eve_client-*.whl
+uvx twine check dist/*
 ```
 
 Build standalone release artifacts:
 
 ```bash
-bash packages/client/scripts/build-eve-client-release.sh
+bash scripts/build-eve-client-release.sh
 ```
 
-Export to a standalone repository:
+## License
 
-```bash
-bash packages/client/scripts/export-eve-client-standalone.sh /path/to/eve-client
-```
+Apache-2.0. See [LICENSE](/Users/kozman/Repos/github.com/sherifkozman/eve/packages/client/LICENSE).
