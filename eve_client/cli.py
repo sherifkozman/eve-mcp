@@ -826,7 +826,9 @@ def install(
 
     # Interactive flow: guided prompts when TTY, no --tool, no --all
     from eve_client.interactive import (  # noqa: PLC0415
+        is_keyring_available,
         preview_and_confirm,
+        prompt_file_fallback,
         run_interactive_install,
         should_use_interactive,
     )
@@ -863,7 +865,15 @@ def install(
             return
         if not preview_and_confirm(plan):
             raise typer.Exit(1)
+        # Proactively handle missing keyring before attempting to store credentials.
+        # This surfaces the headless-Linux footgun as a friendly prompt rather than an
+        # error mid-apply.  The explicit --allow-file-fallback flag still works for
+        # scripted / non-interactive use.
         config = _apply_requested_file_fallback(config, allow_file_fallback)
+        if not config.allow_file_secret_fallback and not is_keyring_available():
+            if not prompt_file_fallback():
+                raise typer.Exit(1)
+            config = _enable_file_fallback(config)
         plan = build_install_plan(
             detected,
             config,

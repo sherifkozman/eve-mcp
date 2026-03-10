@@ -457,3 +457,155 @@ class TestInstallCommandInteractiveIntegration:
         assert result.exit_code == 0
         assert "txn-abc-123" in result.output
         assert "Verification passed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# is_keyring_available + prompt_file_fallback
+# ---------------------------------------------------------------------------
+
+
+class TestIsKeyringAvailable:
+    def test_returns_true_when_keyring_works(self):
+        """is_keyring_available returns True when the keyring probe succeeds."""
+        with (
+            patch("eve_client.interactive.KeyringCredentialStore") as mock_cls,
+        ):
+            mock_store = MagicMock()
+            mock_cls.return_value = mock_store
+            assert is_keyring_available() is True
+            mock_store.set.assert_called_once()
+            mock_store.delete.assert_called_once()
+
+    def test_returns_false_when_keyring_raises(self):
+        """is_keyring_available returns False when the keyring probe raises KeyringError."""
+        from keyring.errors import KeyringError
+
+        with patch("eve_client.interactive.KeyringCredentialStore") as mock_cls:
+            mock_store = MagicMock()
+            mock_store.set.side_effect = KeyringError("no backend")
+            mock_cls.return_value = mock_store
+            assert is_keyring_available() is False
+
+    def test_returns_false_on_any_exception(self):
+        """is_keyring_available returns False for any unexpected error during probe."""
+        with patch("eve_client.interactive.KeyringCredentialStore") as mock_cls:
+            mock_store = MagicMock()
+            mock_store.set.side_effect = RuntimeError("unexpected")
+            mock_cls.return_value = mock_store
+            assert is_keyring_available() is False
+
+
+class TestPromptFileFallback:
+    @patch("eve_client.interactive.Confirm.ask", return_value=True)
+    def test_user_accepts(self, mock_confirm):
+        """prompt_file_fallback returns True when user accepts."""
+        assert prompt_file_fallback() is True
+        mock_confirm.assert_called_once()
+
+    @patch("eve_client.interactive.Confirm.ask", return_value=False)
+    def test_user_declines(self, mock_confirm):
+        """prompt_file_fallback returns False when user declines."""
+        assert prompt_file_fallback() is False
+
+    @patch("eve_client.interactive.Confirm.ask", return_value=True)
+    def test_default_is_false(self, mock_confirm):
+        """prompt_file_fallback defaults to False (conservative: opt-in required)."""
+        prompt_file_fallback()
+        _, kwargs = mock_confirm.call_args
+        assert kwargs.get("default") is False
+
+
+class TestInteractiveProactiveKeyringCheck:
+    """Verify the proactive keyring check wiring in the interactive install path."""
+
+    def test_no_keyring_user_accepts_file_fallback(self):
+        """When keyring is unavailable and user accepts file fallback, install proceeds."""
+        interactive_result = InteractiveResult(selected_tools=["claude-code"])
+        apply_result = ApplyResult(
+            transaction_id="txn-fallback-ok",
+            applied_actions=1,
+            applied_tools=["claude-code"],
+        )
+        verify_results = [{"tool": "claude-code", "connectivity": {"success": True}}]
+        config_no_fallback = _fake_config()
+
+        import dataclasses
+
+        config_with_fallback = dataclasses.replace(
+            config_no_fallback, allow_file_secret_fallback=True
+        )
+
+        with (
+            patch("eve_client.interactive.should_use_interactive", return_value=True),
+            patch(
+                "eve_client.interactive.run_interactive_install", return_value=interactive_result
+            ),
+            patch("eve_client.interactive.preview_and_confirm", return_value=True),
+            patch("eve_client.cli.resolve_config", return_value=config_no_fallback),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.cli._credential_store", return_value=MagicMock()),
+            patch("eve_client.cli.apply_install_plan", return_value=apply_result),
+            patch("eve_client.cli.verify_tools", return_value=verify_results),
+            patch("eve_client.interactive.is_keyring_available", return_value=False),
+            patch("eve_client.interactive.prompt_file_fallback", return_value=True) as mock_pfb,
+            patch("eve_client.cli._enable_file_fallback", return_value=config_with_fallback),
+        ):
+            result = _runner.invoke(app, ["install", "--apply"])
+
+        mock_pfb.assert_called_once()
+        assert result.exit_code == 0
+        assert "txn-fallback-ok" in result.output
+
+    def test_no_keyring_user_declines_file_fallback_exits(self):
+        """When keyring is unavailable and user declines file fallback, exit code is 1."""
+        interactive_result = InteractiveResult(selected_tools=["claude-code"])
+        config_no_fallback = _fake_config()
+
+        with (
+            patch("eve_client.interactive.should_use_interactive", return_value=True),
+            patch(
+                "eve_client.interactive.run_interactive_install", return_value=interactive_result
+            ),
+            patch("eve_client.interactive.preview_and_confirm", return_value=True),
+            patch("eve_client.cli.resolve_config", return_value=config_no_fallback),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.cli._credential_store", return_value=MagicMock()),
+            patch("eve_client.interactive.is_keyring_available", return_value=False),
+            patch("eve_client.interactive.prompt_file_fallback", return_value=False) as mock_pfb,
+        ):
+            result = _runner.invoke(app, ["install", "--apply"])
+
+        mock_pfb.assert_called_once()
+        assert result.exit_code == 1
+
+    def test_keyring_available_skips_file_fallback_prompt(self):
+        """When keyring is available, prompt_file_fallback is never called."""
+        interactive_result = InteractiveResult(selected_tools=["claude-code"])
+        apply_result = ApplyResult(
+            transaction_id="txn-keyring-ok",
+            applied_actions=1,
+            applied_tools=["claude-code"],
+        )
+        verify_results = [{"tool": "claude-code", "connectivity": {"success": True}}]
+
+        with (
+            patch("eve_client.interactive.should_use_interactive", return_value=True),
+            patch(
+                "eve_client.interactive.run_interactive_install", return_value=interactive_result
+            ),
+            patch("eve_client.interactive.preview_and_confirm", return_value=True),
+            patch("eve_client.cli.resolve_config", return_value=_fake_config()),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.cli._credential_store", return_value=MagicMock()),
+            patch("eve_client.cli.apply_install_plan", return_value=apply_result),
+            patch("eve_client.cli.verify_tools", return_value=verify_results),
+            patch("eve_client.interactive.is_keyring_available", return_value=True),
+            patch("eve_client.interactive.prompt_file_fallback") as mock_pfb,
+        ):
+            result = _runner.invoke(app, ["install", "--apply"])
+
+        mock_pfb.assert_not_called()
+        assert result.exit_code == 0

@@ -9,10 +9,46 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from eve_client.auth.keyring_store import KeyringCredentialStore
 from eve_client.models import DetectedTool, InstallPlan, ToolName
 from eve_client.tty import stdin_is_tty as _stdin_is_tty
 
 console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Credential store availability helpers
+# ---------------------------------------------------------------------------
+
+
+def is_keyring_available() -> bool:
+    """Return True if the system keyring backend can store secrets.
+
+    Probes the keyring by attempting a test write and immediate delete.
+    Returns False on headless Linux machines with no usable keyring backend.
+    """
+    try:
+        store = KeyringCredentialStore()
+        _TEST_KEY = "__eve_probe__"
+        store.set(_TEST_KEY, "1")
+        store.delete(_TEST_KEY)
+        return True
+    except Exception:  # KeyringError or any backend failure
+        return False
+
+
+def prompt_file_fallback() -> bool:
+    """Ask the user whether to enable file-based credential storage.
+
+    Called proactively when no keyring is available, before the install attempt.
+    Returns True if the user consents to file-based storage.
+    """
+    console.print(
+        "[yellow]No secure keyring backend detected on this machine.[/yellow]\n"
+        "Eve can fall back to a local encrypted file to store credentials.\n"
+        "This is suitable for headless Linux servers but is less secure than a keyring."
+    )
+    return Confirm.ask("Enable file-based credential storage for Eve?", default=False)
 
 
 # ---------------------------------------------------------------------------
