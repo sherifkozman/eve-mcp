@@ -6,6 +6,13 @@ It detects local tools, configures MCP, installs Eve-managed prompt and hook fil
 
 ## Install
 
+Before installing the client, get an Eve workspace:
+
+- Request access: [https://evemem.com](https://evemem.com)
+- After your workspace is provisioned, sign in to the Eve dashboard:
+  - [https://evemem.com/app/overview](https://evemem.com/app/overview)
+- If you plan to use API-key auth, create or rotate a tenant key from the Eve admin/user setup flow before connecting your client.
+
 ### From GitHub now
 
 Preferred:
