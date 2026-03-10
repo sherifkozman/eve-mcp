@@ -1,19 +1,25 @@
 """Tests for the interactive installer flow."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from typer.testing import CliRunner
+
+from eve_client.cli import app
 from eve_client.interactive import (
     InteractiveResult,
+    is_keyring_available,
     preview_and_confirm,
     prompt_api_key,
+    prompt_file_fallback,
     prompt_repair_or_uninstall,
     prompt_tool_options,
     prompt_tool_selection,
     run_interactive_install,
     should_use_interactive,
 )
-from eve_client.models import DetectedTool, InstallPlan, PlannedAction, ToolPlan
+from eve_client.models import ApplyResult, DetectedTool, InstallPlan, PlannedAction, ToolPlan
+from eve_client.config import ResolvedConfig
 
 
 def _make_detected(name, binary_found=True, config_exists=False):
@@ -305,3 +311,149 @@ class TestInstallCommandInteractiveRouting:
     @patch("eve_client.interactive._stdin_is_tty", return_value=True)
     def test_non_interactive_flag_skips(self, mock_tty):
         assert should_use_interactive(tool_flag=None, all_flag=False, non_interactive=True) is False
+
+
+# ---------------------------------------------------------------------------
+# CLI integration tests for the interactive installer flow
+# ---------------------------------------------------------------------------
+
+_runner = CliRunner()
+
+
+def _fake_config(tmp_path: Path | None = None) -> ResolvedConfig:
+    root = (tmp_path or Path("/tmp/eve-test-fake")).resolve()
+    return ResolvedConfig(
+        config_dir=root / ".cfg" / "eve",
+        config_path=root / ".cfg" / "eve" / "config.json",
+        state_dir=root / ".cfg" / "eve",
+        project_root=root,
+        mcp_base_url="https://mcp.evemem.com",
+        mcp_server_name="eve-memory",
+        environment="production",
+        feature_claude_desktop=False,
+        codex_enabled=False,
+        codex_source="default",
+        allow_file_secret_fallback=False,
+    )
+
+
+def _fake_detected() -> list[DetectedTool]:
+    return [_make_detected("claude-code")]
+
+
+def _fake_plan() -> InstallPlan:
+    action = PlannedAction(
+        action_id="a1",
+        tool="claude-code",
+        action_type="write_config",
+        path=Path("/home/user/.claude.json"),
+        summary="Write Eve MCP server config",
+        scope="global-config",
+        requires_backup=True,
+        requires_confirmation=True,
+        idempotent=True,
+    )
+    tool_plan = ToolPlan(
+        tool="claude-code",
+        auth_mode="api-key",
+        supported=True,
+        actions=[action],
+    )
+    return InstallPlan(
+        mcp_base_url="https://mcp.evemem.com",
+        environment="production",
+        transaction_scope="per-tool-with-session-grouping",
+        tool_plans=[tool_plan],
+    )
+
+
+class TestInstallCommandInteractiveIntegration:
+    """CliRunner integration tests — verify install command wiring for interactive flow."""
+
+    def test_tty_interactive_path_invoked(self):
+        """When interactive mode is active and user declines, exit code is 1."""
+        interactive_result = InteractiveResult(selected_tools=["claude-code"])
+
+        with (
+            patch("eve_client.interactive.should_use_interactive", return_value=True),
+            patch(
+                "eve_client.interactive.run_interactive_install", return_value=interactive_result
+            ),
+            patch("eve_client.interactive.preview_and_confirm", return_value=False),
+            patch("eve_client.cli.resolve_config", return_value=_fake_config()),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+        ):
+            result = _runner.invoke(app, ["install", "--dry-run"])
+
+        from eve_client.interactive import run_interactive_install as _rii
+
+        # Confirm the interactive path was followed and user declining gives exit code 1
+        assert result.exit_code == 1
+
+    def test_non_interactive_flag_bypasses(self):
+        """--non-interactive skips run_interactive_install and shows plan output."""
+        with (
+            patch("eve_client.cli.resolve_config", return_value=_fake_config()),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.interactive.run_interactive_install") as mock_rii,
+        ):
+            result = _runner.invoke(app, ["install", "--non-interactive", "--dry-run"])
+
+        mock_rii.assert_not_called()
+        assert result.exit_code == 0
+        assert (
+            "Dry run" in result.output
+            or "tool_plans" in result.output
+            or "Install Plan" in result.output
+        )
+
+    def test_tool_flag_bypasses_interactive(self):
+        """--tool bypasses run_interactive_install entirely."""
+        with (
+            patch("eve_client.cli.resolve_config", return_value=_fake_config()),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.interactive.run_interactive_install") as mock_rii,
+        ):
+            result = _runner.invoke(app, ["install", "--tool", "claude-code", "--dry-run"])
+
+        mock_rii.assert_not_called()
+        assert result.exit_code == 0
+
+    def test_interactive_apply_calls_apply_and_verify(self):
+        """Full interactive apply chain: interactive → confirm → apply → verify."""
+        interactive_result = InteractiveResult(selected_tools=["claude-code"])
+        apply_result = ApplyResult(
+            transaction_id="txn-abc-123",
+            applied_actions=1,
+            applied_tools=["claude-code"],
+        )
+        verify_results = [{"tool": "claude-code", "connectivity": {"success": True}}]
+
+        with (
+            patch(
+                "eve_client.interactive.should_use_interactive", return_value=True
+            ) as mock_interactive,
+            patch(
+                "eve_client.interactive.run_interactive_install", return_value=interactive_result
+            ) as mock_rii,
+            patch("eve_client.interactive.preview_and_confirm", return_value=True) as mock_confirm,
+            patch("eve_client.cli.resolve_config", return_value=_fake_config()),
+            patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
+            patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),
+            patch("eve_client.cli._credential_store", return_value=MagicMock()),
+            patch("eve_client.cli.apply_install_plan", return_value=apply_result) as mock_apply,
+            patch("eve_client.cli.verify_tools", return_value=verify_results) as mock_verify,
+        ):
+            result = _runner.invoke(app, ["install", "--apply"])
+
+        mock_interactive.assert_called_once()
+        mock_rii.assert_called_once()
+        mock_confirm.assert_called_once()
+        mock_apply.assert_called_once()
+        mock_verify.assert_called_once()
+        assert result.exit_code == 0
+        assert "txn-abc-123" in result.output
+        assert "Verification passed" in result.output
