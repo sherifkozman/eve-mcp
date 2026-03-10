@@ -13,7 +13,6 @@ from unittest.mock import patch
 import tomllib
 import pytest
 
-from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
 from eve_client.integrations.claude_code import ClaudeCodeProvider
 from eve_client.integrations.codex_cli import CodexCliProvider
@@ -23,32 +22,12 @@ from eve_client.merge import (
     companion_content,
     has_eve_claude_hooks,
     has_eve_gemini_hooks,
-    has_eve_json_entry,
-    has_eve_toml_entry,
     is_eve_companion_file,
     merge_companion_file,
     merge_json_config,
     merge_toml_config,
 )
 from eve_client.models import DetectedTool
-
-
-def _resolved_config(tmp_path: Path, **overrides) -> ResolvedConfig:
-    defaults = dict(
-        config_dir=tmp_path / ".eve-config",
-        config_path=tmp_path / ".eve-config" / "config.json",
-        state_dir=tmp_path / ".eve-state",
-        project_root=tmp_path,
-        mcp_base_url="https://mcp.evemem.com",
-        mcp_server_name="eve-memory",
-        environment="production",
-        feature_claude_desktop=False,
-        codex_enabled=True,
-        codex_source="config",
-        allow_file_secret_fallback=True,
-    )
-    defaults.update(overrides)
-    return ResolvedConfig(**defaults)
 
 
 # ---------------------------------------------------------------------------
