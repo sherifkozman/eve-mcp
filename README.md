@@ -204,6 +204,55 @@ OAuth resource:
 https://mcp.evemem.com/mcp
 ```
 
+Codex prompt seeding belongs in the active project `AGENTS.md`. Eve manages its
+own marked block inside that file rather than creating a parallel sidecar file.
+
+### Other MCP clients
+
+For other remote MCP clients, the minimum working setup is:
+
+1. MCP URL:
+
+```text
+https://mcp.evemem.com/mcp
+```
+
+2. One source-agent header:
+
+```text
+X-Source-Agent: your_client_name
+```
+
+3. Choose one auth style:
+
+- API key:
+
+```text
+X-API-Key: eve_<tenant>_...
+```
+
+- OAuth bearer:
+
+```text
+Authorization: Bearer <token>
+```
+
+4. For OAuth-capable clients, use this resource identifier:
+
+```text
+https://mcp.evemem.com/mcp
+```
+
+5. Required scopes:
+
+```text
+memory.read
+memory.write
+```
+
+If the client supports a companion instruction file, point it at the active
+instruction file for that tool rather than inventing a second parallel file.
+
 ### Which auth path to use
 
 - Claude Code: API key

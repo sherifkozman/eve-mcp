@@ -37,7 +37,7 @@ def _allowed_companion_path(config: ResolvedConfig, tool: str) -> Path:
     if tool == "claude-code":
         return (config.config_dir.parent / ".claude" / "CLAUDE.md").resolve(strict=False)
     if tool == "codex-cli":
-        return (config.project_root / "AGENTS.eve.md").resolve(strict=False)
+        return (config.project_root / "AGENTS.md").resolve(strict=False)
     if tool == "gemini-cli":
         return (config.project_root / "GEMINI.md").resolve(strict=False)
     raise OperationPolicyError(f"No companion-file policy for tool {tool}")

@@ -105,6 +105,16 @@ def test_companion_content_contains_markers() -> None:
     assert "### Write discipline" in content
 
 
+def test_merge_companion_file_appends_to_existing_agents_md(tmp_path: Path) -> None:
+    companion = tmp_path / "AGENTS.md"
+    companion.write_text("# Team agents\n\nPrefer concise diffs.\n", encoding="utf-8")
+    merged = merge_companion_file(companion, "codex-cli", "https://mcp.evemem.com/mcp")
+    assert "# Team agents" in merged
+    assert "## Eve Memory Protocol" in merged
+    assert "EVE-BEGIN:codex-cli:v1" in merged
+    assert "MCP endpoint:" in merged
+
+
 def test_remove_json_config_only_removes_eve_entry(tmp_path: Path) -> None:
     config = tmp_path / ".claude" / "settings.json"
     config.parent.mkdir(parents=True)

@@ -610,7 +610,7 @@ def test_repair_command_applies_codex_when_requested(tmp_path: Path, monkeypatch
     assert result.exit_code == 0
     assert "Repaired." in result.output
     assert (tmp_path / ".codex" / "config.toml").exists()
-    assert (tmp_path / "AGENTS.eve.md").exists()
+    assert (tmp_path / "AGENTS.md").exists()
 
 
 def test_doctor_reports_trust_state_recovery(tmp_path: Path, monkeypatch) -> None:

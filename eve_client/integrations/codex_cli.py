@@ -51,8 +51,8 @@ class CodexCliProvider(ToolProvider):
             planned_action(
                 tool=self.tool,
                 action_type="create_companion_file",
-                path=Path.cwd() / "AGENTS.eve.md",
-                summary="Create Eve-managed AGENTS companion file (prompt seeding only; no Codex hooks installed)",
+                path=Path.cwd() / "AGENTS.md",
+                summary="Create or update Eve-managed instructions in active AGENTS.md (prompt seeding only; no Codex hooks installed)",
                 scope="project",
                 requires_backup=True,
                 requires_confirmation=True,
