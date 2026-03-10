@@ -152,6 +152,66 @@ eve uninstall --tool claude-code --yes
 eve run --tool codex-cli -- exec "Use Eve memory to search for my latest preference."
 ```
 
+## Manual MCP Configuration
+
+If you do not want the installer to edit client config for you, add the hosted Eve MCP server manually.
+
+### Shared hosted MCP endpoint
+
+```text
+https://mcp.evemem.com/mcp
+```
+
+### Claude Code / Gemini CLI (API key)
+
+Use a tenant API key from the Eve admin panel.
+
+```json
+{
+  "eve-memory": {
+    "httpUrl": "https://mcp.evemem.com/mcp",
+    "headers": {
+      "X-API-Key": "eve_<tenant>_...",
+      "X-Source-Agent": "claude_code"
+    }
+  }
+}
+```
+
+For Gemini, keep the same shape and change:
+
+```text
+X-Source-Agent = gemini_cli
+```
+
+### Codex CLI (OAuth)
+
+Codex should use an Eve-owned bearer token, not native `codex mcp login`.
+
+```toml
+[mcp_servers.eve-memory]
+url = "https://mcp.evemem.com/mcp"
+bearer_token_env_var = "EVE_CODEX_BEARER_TOKEN"
+startup_timeout_sec = 60
+
+[mcp_servers.eve-memory.headers]
+X-Source-Agent = "codex_cli"
+```
+
+OAuth resource:
+
+```text
+https://mcp.evemem.com/mcp
+```
+
+### Which auth path to use
+
+- Claude Code: API key
+- Gemini CLI: API key
+- Codex CLI: Eve OAuth
+
+If you want Eve to manage the config, prompts, hooks, and verification for you, use `eve connect` instead of editing files manually.
+
 ## Safety Model
 
 - no silent shell profile mutation
