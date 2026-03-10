@@ -748,8 +748,7 @@ def connect(
             else:
                 oauth_err = verify_result["connectivity"]["error"]
                 console.print(
-                    f"[yellow]OAuth verification requires follow-up:[/yellow] "
-                    f"{oauth_err}"
+                    f"[yellow]OAuth verification requires follow-up:[/yellow] {oauth_err}"
                 )
         elif not bearer_token:
             _print_oauth_guidance(config, detected_tool.name, open_browser=open_browser)
@@ -799,9 +798,7 @@ def connect(
         console.print("[green]Verification succeeded.[/green]")
     else:
         conn_err = verify_result["connectivity"]["error"]
-        console.print(
-            f"[yellow]Verification requires follow-up:[/yellow] {conn_err}"
-        )
+        console.print(f"[yellow]Verification requires follow-up:[/yellow] {conn_err}")
 
 
 @app.command()
@@ -846,7 +843,7 @@ def install(
             uninstall_tools(
                 config=config,
                 credential_store=credential_store,
-                tools=interactive_result.uninstall_tools,  # type: ignore[arg-type]
+                tools=interactive_result.uninstall_tools,
             )
             console.print(
                 f"[green]Uninstalled:[/green] {', '.join(interactive_result.uninstall_tools)}"
@@ -885,6 +882,7 @@ def install(
                 allowed_tools=interactive_result.selected_tools,
             )
         except CredentialStoreUnavailableError as exc:
+            # Guard: selected_tools is non-empty here (empty case returns on line 854)
             first_tool = interactive_result.selected_tools[0]
             config = _recover_from_unavailable_credential_store(config, first_tool, exc)
             credential_store = _credential_store(config)

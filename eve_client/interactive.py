@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from eve_client.models import DetectedTool, InstallPlan
+from eve_client.models import DetectedTool, InstallPlan, ToolName
 from eve_client.tty import stdin_is_tty as _stdin_is_tty
 
 console = Console()
@@ -168,12 +168,12 @@ def prompt_repair_or_uninstall() -> str:
 class InteractiveResult:
     """Result from the interactive flow: selected tools and their options."""
 
-    selected_tools: list[str]
-    auth_overrides: dict[str, str] = field(default_factory=dict)
-    prompt_scope_overrides: dict[str, str] = field(default_factory=dict)
-    hook_overrides: dict[str, bool] = field(default_factory=dict)
-    provided_secrets: dict[str, str] = field(default_factory=dict)
-    uninstall_tools: list[str] = field(default_factory=list)
+    selected_tools: list[ToolName]
+    auth_overrides: dict[ToolName, str] = field(default_factory=dict)
+    prompt_scope_overrides: dict[ToolName, str] = field(default_factory=dict)
+    hook_overrides: dict[ToolName, bool] = field(default_factory=dict)
+    provided_secrets: dict[ToolName, str] = field(default_factory=dict)
+    uninstall_tools: list[ToolName] = field(default_factory=list)
 
 
 def prompt_api_key(tool_name: str) -> str | None:
