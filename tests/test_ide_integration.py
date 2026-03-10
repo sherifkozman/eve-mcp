@@ -344,6 +344,126 @@ class TestCompanionPlacement:
         assert "# My Gemini Config" in merged
         assert "EVE-BEGIN:gemini-cli:v1" in merged
 
+    def test_gemini_project_companion_does_not_clobber_existing_content(
+        self, tmp_path: Path
+    ) -> None:
+        """When a project-level GEMINI.md already exists with user content outside Eve markers,
+        merge_companion_file must preserve that user content and only touch the Eve block."""
+        companion = tmp_path / "GEMINI.md"
+        user_content = (
+            "# My Project Rules\n\n"
+            "Always prefer async/await over callbacks.\n\n"
+            "Use strict TypeScript.\n"
+        )
+        companion.write_text(user_content, encoding="utf-8")
+
+        merged = merge_companion_file(companion, "gemini-cli", "https://mcp.evemem.com")
+
+        # User content is preserved verbatim
+        assert "# My Project Rules" in merged
+        assert "Always prefer async/await over callbacks." in merged
+        assert "Use strict TypeScript." in merged
+        # Eve block is appended
+        assert "<!-- EVE-BEGIN:gemini-cli:v1 -->" in merged
+        assert "<!-- EVE-END:gemini-cli:v1 -->" in merged
+        assert "MCP endpoint: `https://mcp.evemem.com`" in merged
+        # User content appears before the Eve block
+        begin_pos = merged.index("<!-- EVE-BEGIN:gemini-cli:v1 -->")
+        user_pos = merged.index("# My Project Rules")
+        assert user_pos < begin_pos
+
+    def test_gemini_global_companion_coexists_with_project(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """When both global ~/.gemini/GEMINI.md and project ./GEMINI.md exist, the installer
+        places the companion only at the user-selected scope and does not modify the other."""
+        monkeypatch.chdir(tmp_path)
+
+        # Set up global companion directory
+        global_gemini_dir = tmp_path / ".gemini"
+        global_gemini_dir.mkdir(parents=True)
+        global_companion = global_gemini_dir / "GEMINI.md"
+        global_companion.write_text(
+            "# Global Gemini Instructions\n\nGlobal user content.\n", encoding="utf-8"
+        )
+
+        # Set up project companion file with Eve block already present
+        project_companion = tmp_path / "GEMINI.md"
+        project_companion.write_text(
+            companion_content("gemini-cli", "https://mcp.evemem.com"),
+            encoding="utf-8",
+        )
+
+        detected = DetectedTool(
+            name="gemini-cli",
+            config_path=global_gemini_dir / "settings.json",
+            config_format="json",
+            supports_hooks=True,
+            binary_found=True,
+            config_exists=False,
+        )
+
+        # Build plan with explicit global scope — should NOT touch project GEMINI.md
+        plan = GeminiCliProvider().build_plan(
+            detected,
+            "https://mcp.evemem.com",
+            prompt_scope="global",
+        )
+        companion_action = [a for a in plan.actions if a.action_type == "create_companion_file"][0]
+
+        # Action targets global path only
+        assert companion_action.path == global_gemini_dir / "GEMINI.md"
+        assert companion_action.scope == "global-config"
+
+        # Project companion is unchanged (plan did not include it as a write target)
+        project_paths = [a.path for a in plan.actions if a.action_type == "create_companion_file"]
+        assert tmp_path / "GEMINI.md" not in project_paths
+
+        # Simulate the same in reverse: explicit project scope should not target global
+        plan2 = GeminiCliProvider().build_plan(
+            detected,
+            "https://mcp.evemem.com",
+            prompt_scope="project",
+        )
+        companion_action2 = [a for a in plan2.actions if a.action_type == "create_companion_file"][
+            0
+        ]
+        assert companion_action2.path == tmp_path / "GEMINI.md"
+        assert companion_action2.scope == "project"
+        global_paths = [a.path for a in plan2.actions if a.action_type == "create_companion_file"]
+        assert global_gemini_dir / "GEMINI.md" not in global_paths
+
+    def test_gemini_companion_eve_block_is_idempotent(self, tmp_path: Path) -> None:
+        """Running merge_companion_file twice produces the same result — no duplication of
+        Eve blocks and no loss of user content."""
+        companion = tmp_path / "GEMINI.md"
+        user_preamble = "# My Project\n\nSome user instructions.\n"
+        companion.write_text(user_preamble, encoding="utf-8")
+
+        # First merge
+        first = merge_companion_file(companion, "gemini-cli", "https://mcp.evemem.com")
+        companion.write_text(first, encoding="utf-8")
+
+        # Second merge with the same URL (idempotent)
+        second = merge_companion_file(companion, "gemini-cli", "https://mcp.evemem.com")
+
+        # Exactly one Eve block — no duplication
+        assert second.count("<!-- EVE-BEGIN:gemini-cli:v1 -->") == 1
+        assert second.count("<!-- EVE-END:gemini-cli:v1 -->") == 1
+
+        # User content preserved
+        assert "# My Project" in second
+        assert "Some user instructions." in second
+
+        # Content is identical on second pass (stable)
+        assert first == second
+
+        # Third merge with a different URL — block is replaced, not duplicated
+        third = merge_companion_file(companion, "gemini-cli", "https://mcp.evemem.com/v2")
+        assert third.count("<!-- EVE-BEGIN:gemini-cli:v1 -->") == 1
+        assert "mcp.evemem.com/v2" in third
+        assert "mcp.evemem.com`" not in third or "mcp.evemem.com/v2`" in third
+
     # --- Codex CLI ---
 
     def test_codex_cli_companion_is_always_project_scoped(
