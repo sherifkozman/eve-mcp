@@ -1,0 +1,75 @@
+name: release-eve-client
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "eve-client-v*"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Run tests
+        run: |
+          uv run pytest --cov=eve_client --cov-report=term-missing -q tests
+
+  build-python:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build Python artifacts
+        run: |
+          uv build .
+
+      - name: Check Python artifacts
+        run: |
+          uvx twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eve-client-python
+          path: dist/*
+
+  build-binaries:
+    needs: test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build standalone binaries
+        run: |
+          bash scripts/build-eve-client-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eve-client-binaries-${{ matrix.os }}
+          path: release/eve-client/artifacts/*

@@ -1,0 +1,9 @@
+.pytest_cache/
+.coverage
+dist/
+build/
+release/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
