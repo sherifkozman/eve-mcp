@@ -726,7 +726,12 @@ def import_preview(
     )
     if candidate is None:
         raise typer.BadParameter(f"No supported {source_type} source found at {path}")
-    turns = list(adapter.parse(candidate))
+    try:
+        turns = list(adapter.parse(candidate))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"Failed to parse {source_type} source at {path}: {exc}"
+        ) from exc
     payload = {
         "candidate": candidate.to_dict(),
         "turn_count": len(turns),

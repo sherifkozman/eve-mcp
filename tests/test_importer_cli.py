@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from eve_client.cli import app
@@ -361,6 +362,54 @@ def test_import_preview_missing_path_returns_nonzero(monkeypatch, tmp_path: Path
     )
     assert result.exit_code != 0
     assert "No supported codex-cli source found" in result.stderr
+
+
+def test_import_preview_parse_error_returns_clean_cli_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    source_path = tmp_path / "broken.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+
+    @dataclass
+    class _Candidate:
+        source_type: str
+        session_id: str
+        path: Path
+
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "source_type": self.source_type,
+                "session_id": self.session_id,
+                "path": str(self.path),
+            }
+
+    class _Adapter:
+        def discover(self, roots):
+            return [_Candidate("codex-cli", "broken-session", source_path)]
+
+        def parse(self, candidate):
+            raise ValueError("malformed payload")
+
+    monkeypatch.setattr("eve_client.cli.get_import_adapter", lambda _source: _Adapter())
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "preview",
+            "--source",
+            "codex-cli",
+            "--path",
+            str(source_path),
+            "--json",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Failed to parse codex-cli source" in result.stderr
+    assert "malformed payload" in result.stderr
 
 
 def test_import_scan_root_requires_source(monkeypatch, tmp_path: Path) -> None:
