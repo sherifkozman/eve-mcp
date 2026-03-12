@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from eve_client.auth.base import CredentialStore, CredentialStoreUnavailableError
 from eve_client.config import ResolvedConfig, resolve_api_base_url
 from eve_client.importer import ImportLedger, get_adapter
-from eve_client.importer.models import ImportBatch, ImportJob, ImportRun, ImportTurn
+from eve_client.importer.models import (
+    ImportBatch,
+    ImportCandidate,
+    ImportJob,
+    ImportRun,
+    ImportTurn,
+)
+from eve_client.lock import installer_lock
 from eve_client.merge import source_agent_header
 from eve_client.models import ToolName
 
@@ -119,24 +128,118 @@ def _request_batch(
 
 def _batch_payload(
     *,
+    batch_id: str,
     run_id: str,
     source_type: str,
     session_id: str,
-    turns: list[ImportTurn],
+    turn_offset: int,
+    turn_count: int,
     context_mode: str,
     source_priority: int,
     min_importance: int,
-    candidate_path: Path,
+    candidate: ImportCandidate,
+    turns: list[ImportTurn],
 ) -> dict[str, object]:
+    batch_turns = [turn.to_dict() for turn in turns]
+    batch_hash = hashlib.sha256(
+        json.dumps(batch_turns, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
     return {
+        "batch_id": batch_id,
         "import_job_id": run_id,
         "source_system": source_type,
         "session_id": session_id,
-        "turns": [turn.to_dict() for turn in turns],
         "context_mode": context_mode,
         "source_priority": source_priority,
         "min_importance": min_importance,
-        "metadata": {"candidate_path": str(candidate_path)},
+        "candidate": {
+            "source_type": candidate.source_type,
+            "path": str(candidate.path),
+            "session_id": candidate.session_id,
+            "modified_at": candidate.modified_at.isoformat(),
+            "size_bytes": candidate.size_bytes,
+        },
+        "turn_offset": turn_offset,
+        "turn_count": turn_count,
+        "batch_hash": batch_hash,
+    }
+
+
+def _candidate_from_payload(payload: dict[str, object]) -> ImportCandidate:
+    candidate = payload.get("candidate")
+    if not isinstance(candidate, dict):
+        raise ImportUploadError("Importer run batch is missing its candidate snapshot")
+    try:
+        path = Path(str(candidate["path"]))
+        source_type = str(candidate["source_type"])
+        session_id = str(candidate["session_id"])
+        modified_at = datetime.fromisoformat(str(candidate["modified_at"]))
+        size_bytes = int(candidate["size_bytes"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ImportUploadError("Importer run batch contains invalid candidate snapshot") from exc
+    return ImportCandidate(
+        source_type=source_type,  # type: ignore[arg-type]
+        path=path,
+        session_id=session_id,
+        modified_at=modified_at if modified_at.tzinfo else modified_at.replace(tzinfo=UTC),
+        size_bytes=size_bytes,
+    )
+
+
+def _validate_candidate_snapshot(candidate: ImportCandidate) -> None:
+    try:
+        stat_result = candidate.path.stat()
+    except OSError as exc:
+        raise ImportUploadError(
+            f"Failed to stat importer source {candidate.path}: {_sanitize_error(exc)}"
+        ) from exc
+    current_size = int(stat_result.st_size)
+    if current_size != candidate.size_bytes:
+        raise ImportUploadError(
+            "Importer source changed after scan; rerun `eve import scan` before uploading."
+        )
+
+
+def _materialize_request_payload(batch: ImportBatch) -> dict[str, object]:
+    payload = batch.request_payload
+    candidate = _candidate_from_payload(payload)
+    _validate_candidate_snapshot(candidate)
+    adapter = get_adapter(candidate.source_type)
+    try:
+        turns = list(adapter.parse(candidate))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ImportUploadError(
+            f"Failed to parse importer source {candidate.path}: {_sanitize_error(exc)}"
+        ) from exc
+    try:
+        turn_offset = int(payload["turn_offset"])
+        turn_count = int(payload["turn_count"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ImportUploadError("Importer run batch is missing its turn range") from exc
+    chunk = turns[turn_offset : turn_offset + turn_count]
+    if len(chunk) != turn_count:
+        raise ImportUploadError(
+            "Importer source no longer matches the scanned turn layout; rerun `eve import scan`."
+        )
+    batch_turns = [turn.to_dict() for turn in chunk]
+    batch_hash = hashlib.sha256(
+        json.dumps(batch_turns, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    expected_batch_hash = payload.get("batch_hash")
+    if not isinstance(expected_batch_hash, str) or batch_hash != expected_batch_hash:
+        raise ImportUploadError(
+            "Importer source content changed after scan; rerun `eve import scan` before uploading."
+        )
+    return {
+        "import_job_id": payload["import_job_id"],
+        "source_system": payload["source_system"],
+        "session_id": payload["session_id"],
+        "turns": batch_turns,
+        "context_mode": payload["context_mode"],
+        "source_priority": payload["source_priority"],
+        "min_importance": payload["min_importance"],
+        "idempotency_key": payload["batch_id"],
+        "metadata": {"candidate_path": str(candidate.path)},
     }
 
 
@@ -171,10 +274,24 @@ def build_batches_for_job(
             ) from exc
         for turn_offset in range(0, len(turns), batch_size):
             chunk = turns[turn_offset : turn_offset + batch_size]
+            batch_id = f"batch_{uuid.uuid4().hex}"
+            request_payload = _batch_payload(
+                batch_id=batch_id,
+                run_id=run_id,
+                source_type=candidate.source_type,
+                session_id=candidate.session_id,
+                turn_offset=turn_offset,
+                turn_count=len(chunk),
+                context_mode=context_mode,
+                source_priority=source_priority,
+                min_importance=min_importance,
+                candidate=candidate,
+                turns=chunk,
+            )
             batches.append(
                 ImportBatch(
                     run_id="",
-                    batch_id=f"batch_{uuid.uuid4().hex}",
+                    batch_id=batch_id,
                     batch_index=batch_index,
                     candidate_path=candidate.path,
                     source_type=candidate.source_type,
@@ -182,16 +299,7 @@ def build_batches_for_job(
                     turn_offset=turn_offset,
                     turn_count=len(chunk),
                     status="pending",
-                    request_payload=_batch_payload(
-                        run_id=run_id,
-                        source_type=candidate.source_type,
-                        session_id=candidate.session_id,
-                        turns=chunk,
-                        context_mode=context_mode,
-                        source_priority=source_priority,
-                        min_importance=min_importance,
-                        candidate_path=candidate.path,
-                    ),
+                    request_payload=request_payload,
                 )
             )
             batch_index += 1
@@ -232,38 +340,68 @@ def upload_run(
         bearer_token=bearer_token,
     )
     headers = _build_headers(tool_name=tool_name, auth_mode=run.auth_mode, secret=secret)
-    ledger.update_run_status(run.run_id, status="running", last_error=None)
-    final_batches: list[ImportBatch] = []
-    for batch in ledger.get_run_batches(run.run_id):
-        if batch.status == "uploaded":
-            final_batches.append(batch)
-            continue
-        status_code, response = _request_batch(
-            config=config,
-            headers=headers,
-            payload=batch.request_payload,
-            timeout=timeout,
-        )
-        if status_code == 200 and response is not None:
-            ledger.complete_batch(
-                batch_id=batch.batch_id,
-                status="uploaded",
-                remote_idempotency_key=response.get("idempotency_key"),
-                extracted_count=int(response.get("extracted_count", 0)),
-                stored_count=int(response.get("stored_count", 0)),
-                error_count=int(response.get("error_count", 0)),
-                duplicate=bool(response.get("duplicate", False)),
-                result_summary=response.get("result_summary", {}) or {},
-            )
-        elif status_code == 409:
-            detail = response.get("detail") if isinstance(response, dict) else "idempotency conflict"
-            ledger.fail_batch(batch_id=batch.batch_id, status="conflict", error=_sanitize_error(detail))
-        else:
-            detail = "upload failed"
-            if isinstance(response, dict):
-                detail = response.get("detail") or response.get("error") or detail
-            ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=_sanitize_error(detail))
-        final_batches = ledger.get_run_batches(run.run_id)
+    # Serialize against the actual ledger location, not the broader config state
+    # dir, so concurrent uploaders cannot take different locks while mutating the
+    # same SQLite ledger.
+    with installer_lock(ledger.path.parent):
+        ledger.update_run_status(run.run_id, status="running", last_error=None)
+        ledger.recover_submitting_batches(run.run_id)
+        try:
+            for batch in ledger.get_run_batches(run.run_id):
+                if batch.status in {"uploaded", "conflict"}:
+                    continue
+                if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
+                    continue
+                payload = _materialize_request_payload(batch)
+                status_code, response = _request_batch(
+                    config=config,
+                    headers=headers,
+                    payload=payload,
+                    timeout=timeout,
+                )
+                if status_code == 200 and response is not None:
+                    remote_status = str(response.get("status", "")).strip().lower()
+                    result_summary = response.get("result_summary", {}) or {}
+                    if remote_status == "completed":
+                        ledger.complete_batch(
+                            batch_id=batch.batch_id,
+                            status="uploaded",
+                            remote_idempotency_key=response.get("idempotency_key"),
+                            extracted_count=int(response.get("extracted_count", 0)),
+                            stored_count=int(response.get("stored_count", 0)),
+                            error_count=int(response.get("error_count", 0)),
+                            duplicate=bool(response.get("duplicate", False)),
+                            result_summary=result_summary,
+                        )
+                    elif remote_status == "processing":
+                        detail = (
+                            "Managed importer batch is still processing remotely; retry upload later."
+                        )
+                        ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=detail)
+                    elif remote_status == "failed":
+                        detail = "Managed importer batch failed remotely."
+                        if isinstance(result_summary, dict):
+                            summary_detail = result_summary.get("detail") or result_summary.get("error")
+                            if summary_detail:
+                                detail = _sanitize_error(summary_detail)
+                        ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=detail)
+                    else:
+                        ledger.fail_batch(
+                            batch_id=batch.batch_id,
+                            status="failed",
+                            error="Managed importer returned an unknown batch status.",
+                        )
+                elif status_code == 409:
+                    detail = response.get("detail") if isinstance(response, dict) else "idempotency conflict"
+                    ledger.fail_batch(batch_id=batch.batch_id, status="conflict", error=_sanitize_error(detail))
+                else:
+                    detail = "upload failed"
+                    if isinstance(response, dict):
+                        detail = response.get("detail") or response.get("error") or detail
+                    ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=_sanitize_error(detail))
+        except ImportUploadError as exc:
+            ledger.update_run_status(run.run_id, status="failed", last_error=_sanitize_error(exc))
+            raise
     run_batches = ledger.get_run_batches(run.run_id)
     failed = [batch for batch in run_batches if batch.status in {"failed", "conflict"}]
     run_status = "failed" if failed else "completed"

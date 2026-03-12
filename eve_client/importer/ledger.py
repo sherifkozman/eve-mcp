@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from eve_client.importer.models import (
     ImportRun,
     ImportSourceType,
 )
+from eve_client.state_dir import ensure_private_state_dir
 
 
 def _utcnow() -> datetime:
@@ -28,8 +30,17 @@ class ImportLedger:
     def __init__(self, path: Path) -> None:
         self.path = path
 
+    def _ensure_secure_storage(self) -> None:
+        ensure_private_state_dir(self.path.parent)
+        if self.path.exists():
+            if self.path.is_symlink():
+                raise RuntimeError(f"Refusing to use symlinked importer ledger: {self.path}")
+            if not self.path.is_file():
+                raise RuntimeError(f"Importer ledger path is not a file: {self.path}")
+            os.chmod(self.path, 0o600)
+
     def initialize(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_secure_storage()
         with self._connect() as conn:
             conn.executescript(
                 """
@@ -98,8 +109,12 @@ class ImportLedger:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        self._ensure_secure_storage()
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        with suppress(OSError):
+            os.chmod(self.path, 0o600)
         try:
             yield conn
             conn.commit()
@@ -443,6 +458,36 @@ class ImportLedger:
                 """,
                 (status, last_error, now, run_id),
             )
+
+    def recover_submitting_batches(self, run_id: str) -> int:
+        """Return interrupted batches to a retryable state before a new upload attempt."""
+        self.initialize()
+        now = _utcnow().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE import_run_batches
+                SET status = 'failed', last_error = ?, updated_at = ?
+                WHERE run_id = ? AND status = 'submitting'
+                """,
+                ("Recovered interrupted upload attempt; retrying batch.", now, run_id),
+            )
+            return int(cursor.rowcount or 0)
+
+    def mark_batch_submitting(self, *, batch_id: str) -> bool:
+        """Atomically claim a retryable batch for submission."""
+        self.initialize()
+        now = _utcnow().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE import_run_batches
+                SET status = 'submitting', last_error = NULL, updated_at = ?
+                WHERE batch_id = ? AND status IN ('pending', 'failed')
+                """,
+                (now, batch_id),
+            )
+            return int(cursor.rowcount or 0) == 1
 
     def complete_batch(
         self,
