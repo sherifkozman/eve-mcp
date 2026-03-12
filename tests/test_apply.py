@@ -293,6 +293,47 @@ def test_apply_plan_preflight_blocks_other_writes_when_codex_disabled(
     assert not (tmp_path / ".codex" / "config.toml").exists()
 
 
+def test_apply_skips_disabled_codex_plan_entry_without_blocking_enabled_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    disabled_config = ResolvedConfig(
+        config_dir=tmp_path / ".eve-config",
+        config_path=tmp_path / ".eve-config" / "config.json",
+        state_dir=tmp_path / ".eve-state",
+        project_root=tmp_path,
+        mcp_base_url="https://mcp.evemem.com",
+        mcp_server_name="eve-memory",
+        environment="production",
+        feature_claude_desktop=False,
+        codex_enabled=False,
+        codex_source="default",
+        allow_file_secret_fallback=True,
+    )
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch(
+            "eve_client.detect.base.shutil.which",
+            side_effect=lambda name: f"/usr/bin/{name}"
+            if name in {"claude", "gemini", "codex"}
+            else None,
+        ),
+        patched_keyring(),
+    ):
+        detected = detect_tools(only=["claude-code", "gemini-cli", "codex-cli"])
+        plan = build_install_plan(detected, disabled_config)
+        result = apply_install_plan(
+            plan,
+            disabled_config,
+            LocalCredentialStore(disabled_config.state_dir),
+            provided_api_keys={"claude-code": "eve-secret", "gemini-cli": "eve-secret"},
+        )
+    assert result.applied_tools == ["claude-code", "gemini-cli"]
+    assert (tmp_path / ".claude" / "settings.json").exists()
+    assert (tmp_path / ".gemini" / "settings.json").exists()
+    assert not (tmp_path / ".codex" / "config.toml").exists()
+
+
 def test_rollback_refuses_to_overwrite_modified_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
