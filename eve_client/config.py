@@ -123,6 +123,10 @@ def get_state_dir() -> Path:
     return Path.home() / ".local" / "state" / "eve"
 
 
+def get_importer_ledger_path() -> Path:
+    return get_state_dir() / "importer.sqlite3"
+
+
 def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
