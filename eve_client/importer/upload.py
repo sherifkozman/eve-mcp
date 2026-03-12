@@ -204,7 +204,12 @@ def _materialize_request_payload(batch: ImportBatch) -> dict[str, object]:
     payload = batch.request_payload
     candidate = _candidate_from_payload(payload)
     _validate_candidate_snapshot(candidate)
-    adapter = get_adapter(candidate.source_type)
+    try:
+        adapter = get_adapter(candidate.source_type)
+    except KeyError as exc:
+        raise ImportUploadError(
+            f"No importer adapter is available for source type {candidate.source_type!r}"
+        ) from exc
     try:
         turns = list(adapter.parse(candidate))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -265,7 +270,12 @@ def build_batches_for_job(
     batches: list[ImportBatch] = []
     batch_index = 0
     for candidate in candidates:
-        adapter = get_adapter(candidate.source_type)
+        try:
+            adapter = get_adapter(candidate.source_type)
+        except KeyError as exc:
+            raise ImportUploadError(
+                f"No importer adapter is available for source type {candidate.source_type!r}"
+            ) from exc
         try:
             turns = list(adapter.parse(candidate))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -402,12 +412,12 @@ def upload_run(
         except ImportUploadError as exc:
             ledger.update_run_status(run.run_id, status="failed", last_error=_sanitize_error(exc))
             raise
-    run_batches = ledger.get_run_batches(run.run_id)
-    failed = [batch for batch in run_batches if batch.status in {"failed", "conflict"}]
-    run_status = "failed" if failed else "completed"
-    run_error = failed[0].last_error if failed else None
-    ledger.update_run_status(run.run_id, status=run_status, last_error=run_error)
-    refreshed_run = ledger.get_run(run.run_id)
+        run_batches = ledger.get_run_batches(run.run_id)
+        failed = [batch for batch in run_batches if batch.status in {"failed", "conflict"}]
+        run_status = "failed" if failed else "completed"
+        run_error = failed[0].last_error if failed else None
+        ledger.update_run_status(run.run_id, status=run_status, last_error=run_error)
+        refreshed_run = ledger.get_run(run.run_id)
     if refreshed_run is None:
         raise ImportUploadError(f"Run {run.run_id} disappeared from the local ledger")
     return ImportUploadResult(run=refreshed_run, batches=run_batches)

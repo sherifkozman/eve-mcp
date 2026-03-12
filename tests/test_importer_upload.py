@@ -360,6 +360,28 @@ def test_build_batches_for_job_wraps_parse_failures(monkeypatch, tmp_path: Path)
         )
 
 
+def test_build_batches_for_job_wraps_missing_adapter(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+
+    def _missing_adapter(source_type):  # noqa: ANN001
+        raise KeyError(source_type)
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", _missing_adapter)
+
+    with pytest.raises(ImportUploadError, match="No importer adapter is available"):
+        build_batches_for_job(
+            job=job,
+            ledger=ledger,
+            batch_size=10,
+            auth_source_tool="codex-cli",
+            auth_mode="oauth",
+            context_mode="PERSONAL",
+            source_priority=1,
+            min_importance=4,
+        )
+
+
 def test_upload_run_rejects_changed_source_after_scan(tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None
@@ -462,6 +484,40 @@ def test_upload_run_rejects_content_change_with_preserved_stat_fields(tmp_path: 
             credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
             run=run,
         )
+
+
+def test_upload_run_wraps_missing_adapter_during_materialization(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _missing_adapter(source_type):  # noqa: ANN001
+        raise KeyError(source_type)
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", _missing_adapter)
+
+    with pytest.raises(ImportUploadError, match="No importer adapter is available"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+    stored_run = ledger.get_run(run.run_id)
+    assert stored_run is not None
+    assert stored_run.status == "failed"
 
 
 def test_upload_run_fails_when_remote_status_is_processing(monkeypatch, tmp_path: Path) -> None:

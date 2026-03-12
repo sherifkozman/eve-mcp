@@ -78,7 +78,7 @@ def _credential_store(config):
     )
 
 
-def _import_ledger(config) -> ImportLedger:
+def _import_ledger(_config) -> ImportLedger:
     return ImportLedger(get_importer_ledger_path())
 
 

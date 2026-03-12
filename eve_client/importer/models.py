@@ -118,7 +118,7 @@ class ImportBatch:
     session_id: str
     turn_offset: int
     turn_count: int
-    status: Literal["pending", "uploaded", "failed", "conflict"]
+    status: Literal["pending", "submitting", "uploaded", "failed", "conflict"]
     request_payload: dict[str, object]
     remote_idempotency_key: str | None = None
     extracted_count: int | None = None
