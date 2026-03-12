@@ -28,7 +28,13 @@ from eve_client.config import (
     update_local_config,
 )
 from eve_client.detect import ALL_TOOLS, detect_tools
-from eve_client.importer import ImportLedger, scan_candidates
+from eve_client.importer import (
+    ImportLedger,
+    ImportUploadError,
+    build_batches_for_job,
+    scan_candidates,
+    upload_run,
+)
 from eve_client.importer import get_adapter as get_import_adapter
 from eve_client.importer.models import ImportSourceType
 from eve_client.integrations import get_adapter
@@ -100,6 +106,22 @@ def _normalize_import_source(value: str) -> ImportSourceType:
     if normalized not in {"codex-cli", "gemini-cli"}:
         raise typer.BadParameter("--source must be 'codex-cli' or 'gemini-cli'")
     return normalized  # type: ignore[return-value]
+
+
+def _normalize_import_auth_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"api-key", "oauth"}:
+        raise typer.BadParameter("--auth-mode must be 'api-key' or 'oauth'")
+    return normalized
+
+
+def _normalize_import_auth_source_tool(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"claude-code", "gemini-cli", "codex-cli"}:
+        raise typer.BadParameter(
+            "--use-auth-from must be one of claude-code, gemini-cli, codex-cli"
+        )
+    return normalized
 
 
 def _normalize_prompt_scope(prompt_scope: str | None) -> str | None:
@@ -624,6 +646,10 @@ def _import_scan_payload(
     }
 
 
+def _import_run_payload(result) -> dict[str, object]:
+    return result.to_dict()
+
+
 @import_app.command("scan")
 def import_scan(
     source: str | None = typer.Option(None, "--source"),
@@ -751,6 +777,133 @@ def import_jobs(json_output: bool = typer.Option(False, "--json")) -> None:
             job.updated_at.isoformat(timespec="seconds"),
         )
     console.print(table)
+
+
+@import_app.command("runs")
+def import_runs(json_output: bool = typer.Option(False, "--json")) -> None:
+    """List local importer upload runs stored in the Eve state ledger."""
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    runs = ledger.list_runs()
+    payload = [run.to_dict() for run in runs]
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Runs[/bold]", style="magenta"))
+    table = Table(title="Importer runs")
+    table.add_column("Run")
+    table.add_column("Scan job")
+    table.add_column("Status")
+    table.add_column("Auth")
+    table.add_column("Batches")
+    table.add_column("Updated")
+    for run in runs:
+        table.add_row(
+            run.run_id,
+            run.scan_job_id,
+            run.status,
+            f"{run.auth_source_tool} ({run.auth_mode})",
+            str(run.batch_count),
+            run.updated_at.isoformat(timespec="seconds"),
+        )
+    console.print(table)
+
+
+@import_app.command("upload")
+def import_upload(
+    job_id: str = typer.Option(..., "--job"),
+    use_auth_from: str = typer.Option(..., "--use-auth-from"),
+    auth_mode: str = typer.Option("api-key", "--auth-mode"),
+    batch_size: int = typer.Option(50, "--batch-size", min=1, max=200),
+    context_mode: str = typer.Option("PERSONAL", "--context-mode"),
+    source_priority: int = typer.Option(1, "--source-priority", min=1, max=5),
+    min_importance: int = typer.Option(4, "--min-importance", min=1, max=10),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Upload normalized local importer turns to the managed Eve batch endpoint."""
+    config = resolve_config()
+    config = _apply_requested_file_fallback(config, allow_file_fallback)
+    ledger = _import_ledger(config)
+    job = ledger.get_job(job_id)
+    if job is None:
+        raise typer.BadParameter(f"Unknown importer job: {job_id}")
+    normalized_auth_mode = _normalize_import_auth_mode(auth_mode)
+    auth_source_tool = _normalize_import_auth_source_tool(use_auth_from)
+    try:
+        run, _ = build_batches_for_job(
+            job=job,
+            ledger=ledger,
+            batch_size=batch_size,
+            auth_source_tool=auth_source_tool,
+            auth_mode=normalized_auth_mode,
+            context_mode=context_mode,
+            source_priority=source_priority,
+            min_importance=min_importance,
+        )
+        result = upload_run(
+            config=config,
+            ledger=ledger,
+            credential_store=_credential_store(config),
+            run=run,
+            api_key=api_key,
+            bearer_token=bearer_token,
+        )
+    except ImportUploadError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    payload = _import_run_payload(result)
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Upload[/bold]", style="green"))
+    console.print(f"Run: [bold]{result.run.run_id}[/bold]")
+    console.print(f"Status: [bold]{result.run.status}[/bold]")
+    console.print(f"Batches: [bold]{len(result.batches)}[/bold]")
+    failed = [batch for batch in result.batches if batch.status in {"failed", "conflict"}]
+    if failed:
+        console.print(f"[yellow]Problem batches: {len(failed)}[/yellow]")
+        for batch in failed[:5]:
+            console.print(
+                f"- batch {batch.batch_index} ({batch.status}) {batch.last_error or 'unknown error'}"
+            )
+
+
+@import_app.command("resume")
+def import_resume(
+    run_id: str = typer.Option(..., "--run"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Resume a previously created importer upload run."""
+    config = resolve_config()
+    config = _apply_requested_file_fallback(config, allow_file_fallback)
+    ledger = _import_ledger(config)
+    run = ledger.get_run(run_id)
+    if run is None:
+        raise typer.BadParameter(f"Unknown importer run: {run_id}")
+    try:
+        result = upload_run(
+            config=config,
+            ledger=ledger,
+            credential_store=_credential_store(config),
+            run=run,
+            api_key=api_key,
+            bearer_token=bearer_token,
+        )
+    except ImportUploadError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    payload = _import_run_payload(result)
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Resume[/bold]", style="green"))
+    console.print(f"Run: [bold]{result.run.run_id}[/bold]")
+    console.print(f"Status: [bold]{result.run.status}[/bold]")
+    console.print(f"Batches: [bold]{len(result.batches)}[/bold]")
 
 
 @app.command()

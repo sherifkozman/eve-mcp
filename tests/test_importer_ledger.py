@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from eve_client.importer.ledger import ImportLedger
-from eve_client.importer.models import ImportCandidate
+from eve_client.importer.models import ImportBatch, ImportCandidate
 
 
 def _candidate(path: Path, *, source_type: str, session_id: str) -> ImportCandidate:
@@ -38,3 +38,47 @@ def test_import_ledger_persists_scan_jobs(tmp_path: Path) -> None:
 def test_import_ledger_returns_empty_candidate_list_for_unknown_job(tmp_path: Path) -> None:
     ledger = ImportLedger(tmp_path / "state" / "importer.sqlite3")
     assert ledger.get_job_candidates("missing") == []
+
+
+def test_import_ledger_persists_runs_and_batches(tmp_path: Path) -> None:
+    ledger = ImportLedger(tmp_path / "state" / "importer.sqlite3")
+    job = ledger.create_scan_job(
+        source_type="codex-cli",
+        root_path=tmp_path,
+        candidates=[_candidate(tmp_path / "a.jsonl", source_type="codex-cli", session_id="s1")],
+    )
+    run = ledger.create_run(
+        run_id="run_demo",
+        scan_job_id=job.job_id,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        batch_size=10,
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+        batches=[
+            ImportBatch(
+                run_id="",
+                batch_id="batch_1",
+                batch_index=0,
+                candidate_path=tmp_path / "a.jsonl",
+                source_type="codex-cli",
+                session_id="s1",
+                turn_offset=0,
+                turn_count=2,
+                status="pending",
+                request_payload={"import_job_id": "run_demo", "turns": []},
+            )
+        ],
+    )
+
+    stored_run = ledger.get_run(run.run_id)
+    stored_batches = ledger.get_run_batches(run.run_id)
+    listed_runs = ledger.list_runs()
+
+    assert stored_run is not None
+    assert stored_run.run_id == "run_demo"
+    assert stored_run.auth_mode == "oauth"
+    assert listed_runs[0].run_id == "run_demo"
+    assert len(stored_batches) == 1
+    assert stored_batches[0].batch_id == "batch_1"
