@@ -48,8 +48,42 @@ def test_import_scan_json_creates_ledger_job(monkeypatch, tmp_path: Path) -> Non
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["candidate_count"] == 1
+    assert payload["displayed_candidate_count"] == 1
     assert payload["candidates"][0]["session_id"] == "codex-session-1"
     assert payload["job"]["candidate_count"] == 1
+
+
+def test_import_scan_json_reports_full_candidate_count_when_truncated(
+    monkeypatch, tmp_path: Path
+) -> None:
+    first = _write_codex_fixture(tmp_path)
+    second_root = first.parent
+    second = second_root / "importer_codex_sample_2.jsonl"
+    second.write_text((FIXTURES / "importer_codex_sample.jsonl").read_text(encoding="utf-8"))
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "scan",
+            "--source",
+            "codex-cli",
+            "--root",
+            str(second_root.parent.parent.parent.parent),
+            "--limit",
+            "1",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidate_count"] == 2
+    assert payload["displayed_candidate_count"] == 1
+    assert len(payload["candidates"]) == 1
+    assert payload["job"]["candidate_count"] == 2
 
 
 def test_import_preview_json_returns_turns(monkeypatch, tmp_path: Path) -> None:

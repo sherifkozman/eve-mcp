@@ -635,6 +635,7 @@ def _import_scan_payload(
     source_type: ImportSourceType | None,
     root: Path | None,
     candidates,
+    displayed_candidates,
     job,
 ) -> dict[str, object]:
     return {
@@ -642,7 +643,8 @@ def _import_scan_payload(
         "source_type": source_type,
         "root": str(root) if root else None,
         "candidate_count": len(candidates),
-        "candidates": [candidate.to_dict() for candidate in candidates],
+        "displayed_candidate_count": len(displayed_candidates),
+        "candidates": [candidate.to_dict() for candidate in displayed_candidates],
     }
 
 
@@ -679,7 +681,8 @@ def import_scan(
     payload = _import_scan_payload(
         source_type=source_type,
         root=root.expanduser().resolve() if root else None,
-        candidates=candidates[:limit],
+        candidates=candidates,
+        displayed_candidates=candidates[:limit],
         job=job,
     )
     if json_output:
