@@ -104,6 +104,48 @@ def test_build_batches_for_job_uses_run_id_as_import_job_id(tmp_path: Path) -> N
     assert "Remember that I prefer concise release notes." not in raw_payload
 
 
+def test_build_batches_for_job_splits_oversized_chunks(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+
+    class _LargeTurnAdapter:
+        def parse(self, candidate):  # noqa: ANN001
+            huge = "x" * 50000
+            return [
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(lambda: {"role": "user", "content": huge}),
+                    },
+                )(),
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(lambda: {"role": "assistant", "content": huge}),
+                    },
+                )(),
+            ]
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", lambda source_type: _LargeTurnAdapter())
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 2
+    assert len(batches) == 2
+    assert all(batch.turn_count == 1 for batch in batches)
+
+
 def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None
@@ -141,6 +183,53 @@ def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     assert result.run.status == "completed"
     assert result.batches[0].status == "uploaded"
     assert result.batches[0].remote_idempotency_key == "idem-1"
+
+
+def test_upload_run_retries_timeout_with_longer_deadline(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    observed_timeouts: list[float] = []
+    attempts = {"count": 0}
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        observed_timeouts.append(kwargs["timeout"])
+        if attempts["count"] == 0:
+            attempts["count"] += 1
+            raise ImportUploadError("Connection failed: timed out")
+        return 200, {
+            "status": "completed",
+            "idempotency_key": "idem-retry",
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+        timeout=1.0,
+    )
+
+    assert result.run.status == "completed"
+    assert attempts["count"] == 1
+    assert len(observed_timeouts) == 2
+    assert observed_timeouts[1] > observed_timeouts[0]
 
 
 def test_upload_run_locks_on_ledger_directory_not_config_state_dir(

@@ -29,6 +29,9 @@ from eve_client.models import ToolName
 
 _IMPORT_BATCH_PATH = "/memory/import/batch"
 _SUPPORTED_AUTH_TOOLS: tuple[ToolName, ...] = ("claude-code", "gemini-cli", "codex-cli")
+_MAX_BATCH_REQUEST_BYTES = 64 * 1024
+_MAX_UPLOAD_TIMEOUT_SECONDS = 180.0
+_TRANSPORT_RETRY_ATTEMPTS = 1
 
 
 class ImportUploadError(RuntimeError):
@@ -123,8 +126,93 @@ def _request_batch(
             return response.status, _parse_response(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, _parse_response(exc.read().decode("utf-8"))
+    except TimeoutError as exc:
+        raise ImportUploadError(f"Connection failed: {_sanitize_error(exc)}") from exc
     except urllib.error.URLError as exc:
         raise ImportUploadError(f"Connection failed: {_sanitize_error(exc.reason)}") from exc
+
+
+def _estimate_request_bytes(
+    *,
+    run_id: str,
+    source_type: str,
+    session_id: str,
+    context_mode: str,
+    source_priority: int,
+    min_importance: int,
+    candidate: ImportCandidate,
+    turns: list[ImportTurn],
+) -> int:
+    payload = {
+        "import_job_id": run_id,
+        "source_system": source_type,
+        "session_id": session_id,
+        "turns": [turn.to_dict() for turn in turns],
+        "context_mode": context_mode,
+        "source_priority": source_priority,
+        "min_importance": min_importance,
+        "idempotency_key": "batch_preview",
+        "metadata": {"candidate_path": str(candidate.path)},
+    }
+    return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _slice_turn_groups(
+    *,
+    run_id: str,
+    candidate: ImportCandidate,
+    turns: list[ImportTurn],
+    batch_size: int,
+    context_mode: str,
+    source_priority: int,
+    min_importance: int,
+) -> list[tuple[int, list[ImportTurn]]]:
+    turn_groups: list[tuple[int, list[ImportTurn]]] = []
+    for turn_offset in range(0, len(turns), batch_size):
+        chunk = turns[turn_offset : turn_offset + batch_size]
+        pending: list[tuple[int, list[ImportTurn]]] = [(turn_offset, chunk)]
+        while pending:
+            current_offset, current_chunk = pending.pop(0)
+            if len(current_chunk) <= 1:
+                turn_groups.append((current_offset, current_chunk))
+                continue
+            estimated_bytes = _estimate_request_bytes(
+                run_id=run_id,
+                source_type=candidate.source_type,
+                session_id=candidate.session_id,
+                context_mode=context_mode,
+                source_priority=source_priority,
+                min_importance=min_importance,
+                candidate=candidate,
+                turns=current_chunk,
+            )
+            if estimated_bytes <= _MAX_BATCH_REQUEST_BYTES:
+                turn_groups.append((current_offset, current_chunk))
+                continue
+            split_index = max(1, len(current_chunk) // 2)
+            pending.insert(0, (current_offset + split_index, current_chunk[split_index:]))
+            pending.insert(0, (current_offset, current_chunk[:split_index]))
+    return turn_groups
+
+
+def _is_retryable_transport_error(exc: ImportUploadError) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in ("timed out", "timeout", "temporarily unavailable", "connection reset", "connection aborted")
+    )
+
+
+def _effective_timeout(*, payload: dict[str, object], base_timeout: float) -> float:
+    payload_bytes = len(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    )
+    turn_count = len(payload.get("turns", [])) if isinstance(payload.get("turns"), list) else 0
+    dynamic_timeout = max(
+        base_timeout,
+        15.0 + (payload_bytes / 1024.0) * 0.5 + turn_count * 5.0,
+    )
+    return min(dynamic_timeout, _MAX_UPLOAD_TIMEOUT_SECONDS)
 
 
 def _batch_payload(
@@ -283,8 +371,16 @@ def build_batches_for_job(
             raise ImportUploadError(
                 f"Failed to parse importer source {candidate.path}: {_sanitize_error(exc)}"
             ) from exc
-        for turn_offset in range(0, len(turns), batch_size):
-            chunk = turns[turn_offset : turn_offset + batch_size]
+        turn_groups = _slice_turn_groups(
+            run_id=run_id,
+            candidate=candidate,
+            turns=turns,
+            batch_size=batch_size,
+            context_mode=context_mode,
+            source_priority=source_priority,
+            min_importance=min_importance,
+        )
+        for turn_offset, chunk in turn_groups:
             batch_id = f"batch_{uuid.uuid4().hex}"
             request_payload = _batch_payload(
                 batch_id=batch_id,
@@ -366,12 +462,22 @@ def upload_run(
                     continue
                 current_batch_id = batch.batch_id
                 payload = _materialize_request_payload(batch)
-                status_code, response = _request_batch(
-                    config=config,
-                    headers=headers,
-                    payload=payload,
-                    timeout=timeout,
-                )
+                effective_timeout = _effective_timeout(payload=payload, base_timeout=timeout)
+                attempt = 0
+                while True:
+                    try:
+                        status_code, response = _request_batch(
+                            config=config,
+                            headers=headers,
+                            payload=payload,
+                            timeout=effective_timeout,
+                        )
+                        break
+                    except ImportUploadError as exc:
+                        if attempt >= _TRANSPORT_RETRY_ATTEMPTS or not _is_retryable_transport_error(exc):
+                            raise
+                        attempt += 1
+                        effective_timeout = min(effective_timeout * 2, _MAX_UPLOAD_TIMEOUT_SECONDS)
                 if status_code == 200 and response is not None:
                     remote_status = str(response.get("status", "")).strip().lower()
                     result_summary = response.get("result_summary", {}) or {}
