@@ -14,7 +14,8 @@ from typing import Any
 
 from eve_client.auth.base import CredentialStore, CredentialStoreUnavailableError
 from eve_client.config import ResolvedConfig, resolve_api_base_url
-from eve_client.importer import ImportLedger, get_adapter
+from eve_client.importer.adapters import get_adapter
+from eve_client.importer.ledger import ImportLedger
 from eve_client.importer.models import (
     ImportBatch,
     ImportCandidate,

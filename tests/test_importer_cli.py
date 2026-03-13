@@ -160,6 +160,7 @@ def test_import_runs_lists_created_runs(monkeypatch, tmp_path: Path) -> None:
 
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
+            "status": "completed",
             "idempotency_key": "idem-runs",
             "extracted_count": 2,
             "stored_count": 2,
