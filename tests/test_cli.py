@@ -699,8 +699,9 @@ def test_doctor_reports_trust_state_recovery(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     state_dir = tmp_path / "eve"
     state_dir.mkdir(parents=True, exist_ok=True)
-    store_sequence_watermark(state_dir, 2, allow_file_fallback=True)
-    result = runner.invoke(app, ["doctor"])
+    with patched_keyring():
+        store_sequence_watermark(state_dir, 2, allow_file_fallback=True)
+        result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
     assert "eve trust reinit --yes" in result.output
 

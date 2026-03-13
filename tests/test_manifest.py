@@ -50,42 +50,46 @@ def patched_keyring():
 
 
 def test_manifest_write_creates_signed_envelope(tmp_path: Path) -> None:
-    write_manifest(tmp_path, [_record()])
-    payload = json.loads(manifest_path(tmp_path).read_text(encoding="utf-8"))
-    assert payload["payload"]["version"] == 2
-    assert payload["payload"]["hmac_algorithm"] == HMAC_ALGORITHM
-    assert payload["payload"]["installation_id"]
-    assert payload["payload"]["sequence"] == 1
-    assert payload["signature"]
-    records = load_manifest(tmp_path)
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()])
+        payload = json.loads(manifest_path(tmp_path).read_text(encoding="utf-8"))
+        assert payload["payload"]["version"] == 2
+        assert payload["payload"]["hmac_algorithm"] == HMAC_ALGORITHM
+        assert payload["payload"]["installation_id"]
+        assert payload["payload"]["sequence"] == 1
+        assert payload["signature"]
+        records = load_manifest(tmp_path)
     assert len(records) == 1
     assert records[0].transaction_id == "txn-1"
 
 
 def test_manifest_tamper_is_detected(tmp_path: Path) -> None:
-    write_manifest(tmp_path, [_record()])
-    path = manifest_path(tmp_path)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["payload"]["records"][0]["sha256"] = "tampered"
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    with pytest.raises(ManifestIntegrityError):
-        load_manifest(tmp_path)
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()])
+        path = manifest_path(tmp_path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["payload"]["records"][0]["sha256"] = "tampered"
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        with pytest.raises(ManifestIntegrityError):
+            load_manifest(tmp_path)
 
 
 def test_manifest_rejects_installation_identity_mismatch(tmp_path: Path) -> None:
-    write_manifest(tmp_path, [_record()])
-    path = manifest_path(tmp_path)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["payload"]["installation_id"] = "other-installation"
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    with pytest.raises(ManifestIntegrityError):
-        load_manifest(tmp_path)
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()])
+        path = manifest_path(tmp_path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["payload"]["installation_id"] = "other-installation"
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        with pytest.raises(ManifestIntegrityError):
+            load_manifest(tmp_path)
 
 
 def test_manifest_sequence_increments(tmp_path: Path) -> None:
-    write_manifest(tmp_path, [_record()])
-    write_manifest(tmp_path, [_record(), _record()])
-    payload = json.loads(manifest_path(tmp_path).read_text(encoding="utf-8"))
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()])
+        write_manifest(tmp_path, [_record(), _record()])
+        payload = json.loads(manifest_path(tmp_path).read_text(encoding="utf-8"))
     assert payload["payload"]["sequence"] == 2
     assert payload["payload"]["prev_digest"]
 
@@ -138,16 +142,18 @@ def test_manifest_file_fallback_respects_private_permissions(tmp_path: Path) -> 
 
 
 def test_manifest_detects_missing_manifest_when_sequence_watermark_exists(tmp_path: Path) -> None:
-    store_sequence_watermark(tmp_path, 3, allow_file_fallback=True)
-    with pytest.raises(ManifestIntegrityError):
-        load_manifest(tmp_path, allow_file_fallback=True)
+    with patched_keyring():
+        store_sequence_watermark(tmp_path, 3, allow_file_fallback=True)
+        with pytest.raises(ManifestIntegrityError):
+            load_manifest(tmp_path, allow_file_fallback=True)
 
 
 def test_manifest_detects_sequence_replay_against_watermark(tmp_path: Path) -> None:
-    write_manifest(tmp_path, [_record()], allow_file_fallback=True)
-    store_sequence_watermark(tmp_path, 5, allow_file_fallback=True)
-    with pytest.raises(ManifestIntegrityError):
-        load_manifest(tmp_path, allow_file_fallback=True)
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()], allow_file_fallback=True)
+        store_sequence_watermark(tmp_path, 5, allow_file_fallback=True)
+        with pytest.raises(ManifestIntegrityError):
+            load_manifest(tmp_path, allow_file_fallback=True)
 
 
 def test_manifest_load_fails_closed_when_keyring_watermark_cannot_be_loaded(tmp_path: Path) -> None:

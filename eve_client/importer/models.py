@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-ImportSourceType = Literal["codex-cli", "gemini-cli"]
+ImportSourceType = Literal["claude-code", "codex-cli", "gemini-cli"]
 
 
 @dataclass(slots=True)
@@ -17,6 +17,7 @@ class ImportCandidate:
     session_id: str
     modified_at: datetime
     size_bytes: int
+    content_sha256: str
     turn_count_hint: int | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -26,6 +27,7 @@ class ImportCandidate:
             "session_id": self.session_id,
             "modified_at": self.modified_at.isoformat(),
             "size_bytes": self.size_bytes,
+            "content_sha256": self.content_sha256,
             "turn_count_hint": self.turn_count_hint,
         }
 

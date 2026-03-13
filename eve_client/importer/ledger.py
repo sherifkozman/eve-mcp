@@ -61,6 +61,7 @@ class ImportLedger:
                     session_id TEXT NOT NULL,
                     modified_at TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
+                    content_sha256 TEXT,
                     turn_count_hint INTEGER,
                     PRIMARY KEY (job_id, path),
                     FOREIGN KEY (job_id) REFERENCES import_jobs(job_id) ON DELETE CASCADE
@@ -106,6 +107,12 @@ class ImportLedger:
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(import_candidates)").fetchall()
+            }
+            if "content_sha256" not in columns:
+                conn.execute("ALTER TABLE import_candidates ADD COLUMN content_sha256 TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -151,8 +158,9 @@ class ImportLedger:
             conn.executemany(
                 """
                 INSERT INTO import_candidates (
-                    job_id, source_type, path, session_id, modified_at, size_bytes, turn_count_hint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    job_id, source_type, path, session_id, modified_at, size_bytes, content_sha256,
+                    turn_count_hint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -162,6 +170,7 @@ class ImportLedger:
                         candidate.session_id,
                         candidate.modified_at.isoformat(),
                         candidate.size_bytes,
+                        candidate.content_sha256,
                         candidate.turn_count_hint,
                     )
                     for candidate in candidates
@@ -228,7 +237,7 @@ class ImportLedger:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT source_type, path, session_id, modified_at, size_bytes, turn_count_hint
+                SELECT source_type, path, session_id, modified_at, size_bytes, content_sha256, turn_count_hint
                 FROM import_candidates
                 WHERE job_id = ?
                 ORDER BY modified_at DESC
@@ -242,6 +251,7 @@ class ImportLedger:
                 session_id=row["session_id"],
                 modified_at=datetime.fromisoformat(row["modified_at"]),
                 size_bytes=row["size_bytes"],
+                content_sha256=row["content_sha256"] or "",
                 turn_count_hint=row["turn_count_hint"],
             )
             for row in rows
@@ -467,7 +477,7 @@ class ImportLedger:
             cursor = conn.execute(
                 """
                 UPDATE import_run_batches
-                SET status = 'failed', last_error = ?, updated_at = ?
+                SET status = 'pending', last_error = ?, updated_at = ?
                 WHERE run_id = ? AND status = 'submitting'
                 """,
                 ("Recovered interrupted upload attempt; retrying batch.", now, run_id),
@@ -536,4 +546,84 @@ class ImportLedger:
                 WHERE batch_id = ?
                 """,
                 (status, error, now, batch_id),
+            )
+
+    def replace_batch_with_batches(
+        self,
+        *,
+        batch_id: str,
+        batches: list[ImportBatch],
+    ) -> None:
+        self.initialize()
+        if len(batches) < 2:
+            raise ValueError("replacement requires at least two batches")
+        now = _utcnow().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT run_id, batch_index
+                FROM import_run_batches
+                WHERE batch_id = ?
+                """,
+                (batch_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f"Unknown importer batch: {batch_id}")
+            run_id = row["run_id"]
+            original_index = int(row["batch_index"])
+            conn.execute(
+                """
+                DELETE FROM import_run_batches
+                WHERE batch_id = ?
+                """,
+                (batch_id,),
+            )
+            conn.execute(
+                """
+                UPDATE import_run_batches
+                SET batch_index = batch_index + ?, updated_at = ?
+                WHERE run_id = ? AND batch_index > ?
+                """,
+                (len(batches) - 1, now, run_id, original_index),
+            )
+            conn.executemany(
+                """
+                INSERT INTO import_run_batches (
+                    batch_id, run_id, batch_index, candidate_path, source_type, session_id, turn_offset,
+                    turn_count, status, request_payload, remote_idempotency_key, extracted_count,
+                    stored_count, error_count, duplicate, result_summary_json, last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        batch.batch_id,
+                        run_id,
+                        original_index + offset,
+                        str(batch.candidate_path),
+                        batch.source_type,
+                        batch.session_id,
+                        batch.turn_offset,
+                        batch.turn_count,
+                        batch.status,
+                        json.dumps(batch.request_payload, sort_keys=True),
+                        batch.remote_idempotency_key,
+                        batch.extracted_count,
+                        batch.stored_count,
+                        batch.error_count,
+                        1 if batch.duplicate else 0,
+                        json.dumps(batch.result_summary, sort_keys=True),
+                        batch.last_error,
+                        now,
+                        now,
+                    )
+                    for offset, batch in enumerate(batches)
+                ],
+            )
+            conn.execute(
+                """
+                UPDATE import_runs
+                SET batch_count = batch_count + ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (len(batches) - 1, now, run_id),
             )

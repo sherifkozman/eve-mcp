@@ -96,6 +96,9 @@ class ResolvedConfig:
 
 
 def get_config_dir() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg) / "eve"
     system = platform.system()
     if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "eve"
@@ -103,13 +106,13 @@ def get_config_dir() -> Path:
         appdata = os.environ.get("APPDATA")
         if appdata:
             return Path(appdata) / "eve"
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg:
-        return Path(xdg) / "eve"
     return Path.home() / ".config" / "eve"
 
 
 def get_state_dir() -> Path:
+    xdg = os.environ.get("XDG_STATE_HOME")
+    if xdg:
+        return Path(xdg) / "eve"
     system = platform.system()
     if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "eve"
@@ -117,9 +120,6 @@ def get_state_dir() -> Path:
         local_appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         if local_appdata:
             return Path(local_appdata) / "eve" / "state"
-    xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg:
-        return Path(xdg) / "eve"
     return Path.home() / ".local" / "state" / "eve"
 
 
