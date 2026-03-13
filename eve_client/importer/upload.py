@@ -357,12 +357,14 @@ def upload_run(
     with installer_lock(ledger.path.parent):
         ledger.update_run_status(run.run_id, status="running", last_error=None)
         ledger.recover_submitting_batches(run.run_id)
+        current_batch_id: str | None = None
         try:
             for batch in ledger.get_run_batches(run.run_id):
                 if batch.status in {"uploaded", "conflict"}:
                     continue
                 if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
                     continue
+                current_batch_id = batch.batch_id
                 payload = _materialize_request_payload(batch)
                 status_code, response = _request_batch(
                     config=config,
@@ -410,7 +412,14 @@ def upload_run(
                     if isinstance(response, dict):
                         detail = response.get("detail") or response.get("error") or detail
                     ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=_sanitize_error(detail))
+                current_batch_id = None
         except ImportUploadError as exc:
+            if current_batch_id is not None:
+                ledger.fail_batch(
+                    batch_id=current_batch_id,
+                    status="failed",
+                    error=_sanitize_error(exc),
+                )
             ledger.update_run_status(run.run_id, status="failed", last_error=_sanitize_error(exc))
             raise
         run_batches = ledger.get_run_batches(run.run_id)

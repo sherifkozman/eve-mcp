@@ -295,6 +295,9 @@ def test_upload_run_marks_transport_failures_failed(monkeypatch, tmp_path: Path)
     assert stored_run is not None
     assert stored_run.status == "failed"
     assert stored_run.last_error == "network down"
+    stored_batch = ledger.get_run_batches(run.run_id)[0]
+    assert stored_batch.status == "failed"
+    assert stored_batch.last_error == "network down"
 
 
 def test_upload_run_requires_stored_secret(tmp_path: Path) -> None:
