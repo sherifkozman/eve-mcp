@@ -101,7 +101,7 @@ def test_build_batches_for_job_uses_run_id_as_import_job_id(tmp_path: Path) -> N
             "SELECT request_payload FROM import_run_batches WHERE run_id = ? ORDER BY batch_index ASC",
             (run.run_id,),
         ).fetchone()[0]
-    assert "Testing codex upload path." not in raw_payload
+    assert "Remember that I prefer concise release notes." not in raw_payload
 
 
 def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:

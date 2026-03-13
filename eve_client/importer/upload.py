@@ -328,7 +328,7 @@ def build_batches_for_job(
         min_importance=min_importance,
         batches=batches,
     )
-    return run, batches
+    return run, ledger.get_run_batches(run.run_id)
 
 
 def upload_run(
