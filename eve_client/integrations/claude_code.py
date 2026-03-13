@@ -25,6 +25,7 @@ class ClaudeCodeProvider(ToolProvider):
         hooks_enabled=None,
     ) -> ToolPlan:
         selected_auth_mode = auth_mode or self.auth_mode
+        install_hooks = True if hooks_enabled is None else hooks_enabled
         hook_command = (
             str(Path(sys.argv[0]).resolve().with_name("eve-claude-hook"))
             if Path(sys.argv[0]).name.startswith("eve")
@@ -39,26 +40,51 @@ class ClaudeCodeProvider(ToolProvider):
                 else detected.config_path.parent / "CLAUDE.md"
             )
         )
-        return ToolPlan(
-            tool=self.tool,
-            auth_mode=selected_auth_mode,
-            supported_auth_modes=self.supported_auth_modes,
-            supported=True,
-            actions=[
-                planned_action(
-                    tool=self.tool,
-                    action_type="write_config",
-                    path=detected.config_path,
-                    summary="Add Eve MCP server entry to Claude Code user config",
-                    scope="global-config",
-                    requires_backup=True,
-                    requires_confirmation=True,
-                    idempotent=True,
-                    details={
-                        "config_format": "json",
-                        "mcp_base_url": mcp_base_url,
-                    },
+        actions = [
+            planned_action(
+                tool=self.tool,
+                action_type="write_config",
+                path=detected.config_path,
+                summary="Add Eve MCP server entry to Claude Code user config",
+                scope="global-config",
+                requires_backup=True,
+                requires_confirmation=True,
+                idempotent=True,
+                details={
+                    "config_format": "json",
+                    "mcp_base_url": mcp_base_url,
+                },
+            ),
+            planned_action(
+                tool=self.tool,
+                action_type="create_companion_file",
+                path=companion_path,
+                summary="Create or update Eve-managed Claude instructions in active CLAUDE.md",
+                scope="project" if detected.project_scoped else "global-config",
+                requires_backup=True,
+                requires_confirmation=True,
+                idempotent=True,
+                details={"mcp_base_url": mcp_base_url},
+            ),
+            planned_action(
+                tool=self.tool,
+                action_type="auth_setup",
+                path=None,
+                summary=(
+                    "Prepare Claude Code for Eve OAuth; Claude Code completes OAuth natively on first use"
+                    if selected_auth_mode == "oauth"
+                    else "Store Eve-issued API key and wire Claude Code to it"
                 ),
+                scope="state",
+                requires_backup=False,
+                requires_confirmation=True,
+                idempotent=True,
+                details={"auth_mode": selected_auth_mode},
+            ),
+        ]
+        if install_hooks:
+            actions.insert(
+                1,
                 planned_action(
                     tool=self.tool,
                     action_type="write_hooks_config",
@@ -74,31 +100,11 @@ class ClaudeCodeProvider(ToolProvider):
                         "hook_command": hook_command,
                     },
                 ),
-                planned_action(
-                    tool=self.tool,
-                    action_type="create_companion_file",
-                    path=companion_path,
-                    summary="Create or update Eve-managed Claude instructions in active CLAUDE.md",
-                    scope="project" if detected.project_scoped else "global-config",
-                    requires_backup=True,
-                    requires_confirmation=True,
-                    idempotent=True,
-                    details={"mcp_base_url": mcp_base_url},
-                ),
-                planned_action(
-                    tool=self.tool,
-                    action_type="auth_setup",
-                    path=None,
-                    summary=(
-                        "Prepare Claude Code for Eve OAuth; Claude Code completes OAuth natively on first use"
-                        if selected_auth_mode == "oauth"
-                        else "Store Eve-issued API key and wire Claude Code to it"
-                    ),
-                    scope="state",
-                    requires_backup=False,
-                    requires_confirmation=True,
-                    idempotent=True,
-                    details={"auth_mode": selected_auth_mode},
-                ),
-            ],
+            )
+        return ToolPlan(
+            tool=self.tool,
+            auth_mode=selected_auth_mode,
+            supported_auth_modes=self.supported_auth_modes,
+            supported=True,
+            actions=actions,
         )

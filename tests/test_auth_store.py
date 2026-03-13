@@ -25,12 +25,16 @@ def test_auth_store_uses_keyring(tmp_path: Path) -> None:
 
 def test_auth_store_falls_back_to_file(tmp_path: Path) -> None:
     store = LocalCredentialStore(tmp_path, allow_file_fallback=True)
-    with patch(
-        "eve_client.auth.keyring_store.keyring.set_password", side_effect=KeyringError("no keyring")
+    with (
+        patch(
+            "eve_client.auth.keyring_store.keyring.set_password",
+            side_effect=KeyringError("no keyring"),
+        ),
+        patch("eve_client.auth.keyring_store.keyring.get_password", return_value=None),
     ):
         record = store.set_api_key("gemini-cli", "eve-secret")
-    assert record.source == "file-fallback"
-    value, source = store.get_api_key("gemini-cli")
+        assert record.source == "file-fallback"
+        value, source = store.get_api_key("gemini-cli")
     assert value == "eve-secret"
     assert source == "file-fallback"
     path = tmp_path / "auth-fallback.json"

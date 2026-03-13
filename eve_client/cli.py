@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import webbrowser
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode, urljoin, urlparse
 
@@ -20,8 +21,22 @@ from rich.table import Table
 from eve_client._version import __version__
 from eve_client.apply import apply_install_plan, rollback_transaction
 from eve_client.auth import CredentialStoreUnavailableError, LocalCredentialStore, OAuthSession
-from eve_client.config import DEFAULT_UI_BASE_URL, resolve_config, update_local_config
+from eve_client.config import (
+    DEFAULT_UI_BASE_URL,
+    get_importer_ledger_path,
+    resolve_config,
+    update_local_config,
+)
 from eve_client.detect import ALL_TOOLS, detect_tools
+from eve_client.importer import (
+    ImportLedger,
+    ImportUploadError,
+    build_batches_for_job,
+    scan_candidates,
+    upload_run,
+)
+from eve_client.importer import get_adapter as get_import_adapter
+from eve_client.importer.models import ImportSourceType
 from eve_client.integrations import get_adapter
 from eve_client.lock import (
     InstallerLockUnsupportedPlatformError,
@@ -43,6 +58,8 @@ from eve_client.uninstall import UninstallError, uninstall_tools
 from eve_client.verify import verify_tools
 
 app = typer.Typer(name="eve", help="Eve client installer and tool integration manager.")
+import_app = typer.Typer(name="import", help="Local importer workflow for Codex and Gemini data.")
+app.add_typer(import_app, name="import")
 console = Console()
 CODEX_BEARER_TOKEN_ENV_VAR = "EVE_CODEX_BEARER_TOKEN"
 MCP_OAUTH_SCOPES = (
@@ -59,6 +76,10 @@ def _credential_store(config):
     return LocalCredentialStore(
         config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
     )
+
+
+def _import_ledger(_config) -> ImportLedger:
+    return ImportLedger(get_importer_ledger_path())
 
 
 def _keyring_health(config) -> dict[str, object]:
@@ -78,6 +99,36 @@ def _parse_tools(raw_tools: list[str] | None) -> list[str] | None:
         parsed.extend(part.strip() for part in value.split(",") if part.strip())
     valid = [tool for tool in parsed if tool in ALL_TOOLS]
     return valid or None
+
+
+def _normalize_import_source(value: str) -> ImportSourceType:
+    normalized = value.strip().lower()
+    if normalized not in {"codex-cli", "gemini-cli"}:
+        raise typer.BadParameter("--source must be 'codex-cli' or 'gemini-cli'")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_import_auth_mode(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"api-key", "oauth"}:
+        raise typer.BadParameter("--auth-mode must be 'api-key' or 'oauth'")
+    return normalized
+
+
+def _normalize_import_auth_source_tool(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"claude-code", "gemini-cli", "codex-cli"}:
+        raise typer.BadParameter(
+            "--use-auth-from must be one of claude-code, gemini-cli, codex-cli"
+        )
+    return normalized
+
+
+def _normalize_import_context_mode(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in {"PERSONAL", "NAYA", "ES"}:
+        raise typer.BadParameter("--context-mode must be 'PERSONAL', 'NAYA', or 'ES'")
+    return normalized
 
 
 def _normalize_prompt_scope(prompt_scope: str | None) -> str | None:
@@ -584,6 +635,293 @@ def _tool_status_payload(detected, config, credential_store):
             ),
         }
     return item
+
+
+def _import_scan_payload(
+    *,
+    source_type: ImportSourceType | None,
+    root: Path | None,
+    candidates,
+    displayed_candidates,
+    job,
+) -> dict[str, object]:
+    return {
+        "job": job.to_dict(),
+        "source_type": source_type,
+        "root": str(root) if root else None,
+        "candidate_count": len(candidates),
+        "displayed_candidate_count": len(displayed_candidates),
+        "candidates": [candidate.to_dict() for candidate in displayed_candidates],
+    }
+
+
+def _import_run_payload(result) -> dict[str, object]:
+    return result.to_dict()
+
+
+@import_app.command("scan")
+def import_scan(
+    source: str | None = typer.Option(None, "--source"),
+    root: Path | None = typer.Option(None, "--root"),
+    limit: int = typer.Option(20, "--limit", min=1, max=200),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Scan local Codex or Gemini session files and persist a local scan ledger entry."""
+    config = resolve_config()
+    source_type = _normalize_import_source(source) if source else None
+    roots_by_source: dict[ImportSourceType, list[Path]] | None = None
+    if root:
+        roots_by_source = {}
+        if source_type is None:
+            raise typer.BadParameter("--root requires --source")
+        roots_by_source[source_type] = [root.expanduser().resolve()]
+    candidates = scan_candidates(
+        source_types=[source_type] if source_type else None,
+        roots_by_source=roots_by_source,
+    )
+    ledger = _import_ledger(config)
+    job = ledger.create_scan_job(
+        source_type=source_type,
+        root_path=root.expanduser().resolve() if root else None,
+        candidates=candidates,
+    )
+    payload = _import_scan_payload(
+        source_type=source_type,
+        root=root.expanduser().resolve() if root else None,
+        candidates=candidates,
+        displayed_candidates=candidates[:limit],
+        job=job,
+    )
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Scan[/bold]", style="green"))
+    console.print(f"Job: [bold]{job.job_id}[/bold]")
+    console.print(f"Candidates: [bold]{job.candidate_count}[/bold]")
+    table = Table(title="Recent candidates")
+    table.add_column("Source")
+    table.add_column("Session")
+    table.add_column("Modified")
+    table.add_column("Path")
+    for candidate in candidates[:limit]:
+        table.add_row(
+            candidate.source_type,
+            candidate.session_id,
+            candidate.modified_at.isoformat(timespec="seconds"),
+            str(candidate.path),
+        )
+    console.print(table)
+
+
+@import_app.command("preview")
+def import_preview(
+    source: str = typer.Option(..., "--source"),
+    path: Path = typer.Option(..., "--path"),
+    limit: int = typer.Option(10, "--limit", min=1, max=200),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Preview normalized turns from a local source artifact."""
+    source_type = _normalize_import_source(source)
+    adapter = get_import_adapter(source_type)
+    candidate = next(
+        (
+            item
+            for item in adapter.discover(roots=[path.expanduser().resolve().parent])
+            if item.path == path.expanduser().resolve()
+        ),
+        None,
+    )
+    if candidate is None:
+        raise typer.BadParameter(f"No supported {source_type} source found at {path}")
+    try:
+        turns = list(adapter.parse(candidate))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"Failed to parse {source_type} source at {path}: {exc}"
+        ) from exc
+    payload = {
+        "candidate": candidate.to_dict(),
+        "turn_count": len(turns),
+        "turns": [turn.to_dict() for turn in turns[:limit]],
+    }
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Preview[/bold]", style="cyan"))
+    console.print(f"Source: [bold]{candidate.source_type}[/bold]")
+    console.print(f"Session: [bold]{candidate.session_id}[/bold]")
+    table = Table(title="Normalized turns")
+    table.add_column("Role")
+    table.add_column("Timestamp")
+    table.add_column("Excerpt")
+    for turn in turns[:limit]:
+        excerpt = turn.content.replace("\n", " ")
+        if len(excerpt) > 100:
+            excerpt = excerpt[:97] + "..."
+        table.add_row(
+            turn.role,
+            turn.timestamp.isoformat(timespec="seconds") if turn.timestamp else "-",
+            excerpt,
+        )
+    console.print(table)
+
+
+@import_app.command("jobs")
+def import_jobs(json_output: bool = typer.Option(False, "--json")) -> None:
+    """List local importer scan jobs stored in the Eve state ledger."""
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    jobs = ledger.list_jobs()
+    payload = [job.to_dict() for job in jobs]
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Jobs[/bold]", style="blue"))
+    table = Table(title="Importer jobs")
+    table.add_column("Job")
+    table.add_column("Status")
+    table.add_column("Source")
+    table.add_column("Candidates")
+    table.add_column("Updated")
+    for job in jobs:
+        table.add_row(
+            job.job_id,
+            job.status,
+            job.source_type or "mixed",
+            str(job.candidate_count),
+            job.updated_at.isoformat(timespec="seconds"),
+        )
+    console.print(table)
+
+
+@import_app.command("runs")
+def import_runs(json_output: bool = typer.Option(False, "--json")) -> None:
+    """List local importer upload runs stored in the Eve state ledger."""
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    runs = ledger.list_runs()
+    payload = [run.to_dict() for run in runs]
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Runs[/bold]", style="magenta"))
+    table = Table(title="Importer runs")
+    table.add_column("Run")
+    table.add_column("Scan job")
+    table.add_column("Status")
+    table.add_column("Auth")
+    table.add_column("Batches")
+    table.add_column("Updated")
+    for run in runs:
+        table.add_row(
+            run.run_id,
+            run.scan_job_id,
+            run.status,
+            f"{run.auth_source_tool} ({run.auth_mode})",
+            str(run.batch_count),
+            run.updated_at.isoformat(timespec="seconds"),
+        )
+    console.print(table)
+
+
+@import_app.command("upload")
+def import_upload(
+    job_id: str = typer.Option(..., "--job"),
+    use_auth_from: str = typer.Option(..., "--use-auth-from"),
+    auth_mode: str = typer.Option("api-key", "--auth-mode"),
+    batch_size: int = typer.Option(50, "--batch-size", min=1, max=200),
+    context_mode: str = typer.Option("PERSONAL", "--context-mode"),
+    source_priority: int = typer.Option(1, "--source-priority", min=1, max=5),
+    min_importance: int = typer.Option(4, "--min-importance", min=1, max=10),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Upload normalized local importer turns to the managed Eve batch endpoint."""
+    config = resolve_config()
+    config = _apply_requested_file_fallback(config, allow_file_fallback)
+    ledger = _import_ledger(config)
+    job = ledger.get_job(job_id)
+    if job is None:
+        raise typer.BadParameter(f"Unknown importer job: {job_id}")
+    normalized_auth_mode = _normalize_import_auth_mode(auth_mode)
+    auth_source_tool = _normalize_import_auth_source_tool(use_auth_from)
+    normalized_context_mode = _normalize_import_context_mode(context_mode)
+    try:
+        run, _ = build_batches_for_job(
+            job=job,
+            ledger=ledger,
+            batch_size=batch_size,
+            auth_source_tool=auth_source_tool,
+            auth_mode=normalized_auth_mode,
+            context_mode=normalized_context_mode,
+            source_priority=source_priority,
+            min_importance=min_importance,
+        )
+        result = upload_run(
+            config=config,
+            ledger=ledger,
+            credential_store=_credential_store(config),
+            run=run,
+            api_key=api_key,
+            bearer_token=bearer_token,
+        )
+    except ImportUploadError as exc:
+        typer.secho(f"Error: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    payload = _import_run_payload(result)
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Upload[/bold]", style="green"))
+    console.print(f"Run: [bold]{result.run.run_id}[/bold]")
+    console.print(f"Status: [bold]{result.run.status}[/bold]")
+    console.print(f"Batches: [bold]{len(result.batches)}[/bold]")
+    failed = [batch for batch in result.batches if batch.status in {"failed", "conflict"}]
+    if failed:
+        console.print(f"[yellow]Problem batches: {len(failed)}[/yellow]")
+        for batch in failed[:5]:
+            console.print(
+                f"- batch {batch.batch_index} ({batch.status}) {batch.last_error or 'unknown error'}"
+            )
+
+
+@import_app.command("resume")
+def import_resume(
+    run_id: str = typer.Option(..., "--run"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    bearer_token: str | None = typer.Option(None, "--bearer-token"),
+    allow_file_fallback: bool = typer.Option(False, "--allow-file-fallback"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Resume a previously created importer upload run."""
+    config = resolve_config()
+    config = _apply_requested_file_fallback(config, allow_file_fallback)
+    ledger = _import_ledger(config)
+    run = ledger.get_run(run_id)
+    if run is None:
+        raise typer.BadParameter(f"Unknown importer run: {run_id}")
+    try:
+        result = upload_run(
+            config=config,
+            ledger=ledger,
+            credential_store=_credential_store(config),
+            run=run,
+            api_key=api_key,
+            bearer_token=bearer_token,
+        )
+    except ImportUploadError as exc:
+        typer.secho(f"Error: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    payload = _import_run_payload(result)
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(Panel("[bold]Eve Import Resume[/bold]", style="green"))
+    console.print(f"Run: [bold]{result.run.run_id}[/bold]")
+    console.print(f"Status: [bold]{result.run.status}[/bold]")
+    console.print(f"Batches: [bold]{len(result.batches)}[/bold]")
 
 
 @app.command()

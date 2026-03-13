@@ -198,8 +198,11 @@ def apply_install_plan(
         for tool_plan in plan.tool_plans:
             if allowed_tools and tool_plan.tool not in allowed_tools:
                 continue
-            if tool_plan.tool == "codex-cli" and not feature_enabled_for_tool(
-                tool_plan.tool, config
+            if (
+                tool_plan.tool == "codex-cli"
+                and tool_plan.supported
+                and bool(tool_plan.actions)
+                and not feature_enabled_for_tool(tool_plan.tool, config)
             ):
                 raise ApplyPlanError(
                     "Codex CLI steps are present in this plan, but Codex is disabled at execution time."

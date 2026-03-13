@@ -120,6 +120,38 @@ def test_build_install_plan_for_claude_code() -> None:
     assert len(plan.tool_plans[0].actions) == 4
 
 
+def test_build_install_plan_for_claude_code_without_hooks() -> None:
+    config = ResolvedConfig(
+        config_dir=Path("/tmp/eve-config"),
+        config_path=Path("/tmp/eve-config/config.json"),
+        state_dir=Path("/tmp/eve"),
+        project_root=Path("/tmp/project"),
+        mcp_base_url="https://mcp.evemem.com",
+        mcp_server_name="eve-memory",
+        environment="production",
+        feature_claude_desktop=False,
+        codex_enabled=True,
+        codex_source="config",
+        allow_file_secret_fallback=True,
+    )
+    detected = [
+        DetectedTool(
+            name="claude-code",
+            config_path=Path("/tmp/.claude/settings.json"),
+            config_format="json",
+            supports_hooks=True,
+            binary_found=True,
+            config_exists=False,
+        )
+    ]
+    plan = build_install_plan(detected, config, hook_overrides={"claude-code": False})
+    assert [action.action_type for action in plan.tool_plans[0].actions] == [
+        "write_config",
+        "create_companion_file",
+        "auth_setup",
+    ]
+
+
 def test_build_install_plan_supports_codex_by_default() -> None:
     config = ResolvedConfig(
         config_dir=Path("/tmp/eve-config"),

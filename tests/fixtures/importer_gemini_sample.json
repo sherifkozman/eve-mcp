@@ -1,0 +1,21 @@
+{
+  "sessionId": "gemini-session-1",
+  "projectHash": "abc123",
+  "startTime": "2026-03-10T11:00:00.000Z",
+  "lastUpdated": "2026-03-10T11:05:00.000Z",
+  "messages": [
+    {
+      "id": "m1",
+      "timestamp": "2026-03-10T11:00:01.000Z",
+      "type": "user",
+      "content": "We decided to keep OAuth disabled by default."
+    },
+    {
+      "id": "m2",
+      "timestamp": "2026-03-10T11:00:03.000Z",
+      "type": "gemini",
+      "content": "Understood. I will treat OAuth as experimental until the rollout gate passes."
+    }
+  ],
+  "summary": "demo session"
+}
