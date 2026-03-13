@@ -55,7 +55,7 @@ class ImportTurn:
 @dataclass(slots=True)
 class ImportJob:
     job_id: str
-    status: Literal["scanned", "running", "completed", "failed"]
+    status: Literal["scanned"]
     created_at: datetime
     updated_at: datetime
     source_type: ImportSourceType | None

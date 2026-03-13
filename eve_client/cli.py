@@ -124,6 +124,13 @@ def _normalize_import_auth_source_tool(value: str) -> str:
     return normalized
 
 
+def _normalize_import_context_mode(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in {"PERSONAL", "NAYA", "ES"}:
+        raise typer.BadParameter("--context-mode must be 'PERSONAL', 'NAYA', or 'ES'")
+    return normalized
+
+
 def _normalize_prompt_scope(prompt_scope: str | None) -> str | None:
     if prompt_scope is None:
         return None
@@ -840,6 +847,7 @@ def import_upload(
         raise typer.BadParameter(f"Unknown importer job: {job_id}")
     normalized_auth_mode = _normalize_import_auth_mode(auth_mode)
     auth_source_tool = _normalize_import_auth_source_tool(use_auth_from)
+    normalized_context_mode = _normalize_import_context_mode(context_mode)
     try:
         run, _ = build_batches_for_job(
             job=job,
@@ -847,7 +855,7 @@ def import_upload(
             batch_size=batch_size,
             auth_source_tool=auth_source_tool,
             auth_mode=normalized_auth_mode,
-            context_mode=context_mode,
+            context_mode=normalized_context_mode,
             source_priority=source_priority,
             min_importance=min_importance,
         )

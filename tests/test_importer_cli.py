@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+import typer
 from eve_client.cli import app
 from eve_client.importer.models import ImportBatch, ImportRun
 from typer.testing import CliRunner
@@ -342,6 +344,13 @@ def test_import_resume_json_success(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["run"]["run_id"] == run.run_id
     assert payload["run"]["status"] == "completed"
+
+
+def test_normalize_import_context_mode_rejects_invalid_value() -> None:
+    from eve_client.cli import _normalize_import_context_mode
+
+    with pytest.raises(typer.BadParameter, match="--context-mode must be 'PERSONAL', 'NAYA', or 'ES'"):
+        _normalize_import_context_mode("INVALID")
 
 
 def test_import_preview_missing_path_returns_nonzero(monkeypatch, tmp_path: Path) -> None:
