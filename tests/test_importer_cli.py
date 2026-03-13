@@ -31,6 +31,16 @@ def _write_gemini_fixture(tmp_path: Path) -> Path:
     return target
 
 
+def _write_claude_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / ".claude" / "projects" / "project-a"
+    root.mkdir(parents=True)
+    target = root / "importer_claude_code_sample.jsonl"
+    target.write_text(
+        (FIXTURES / "importer_claude_code_sample.jsonl").read_text(encoding="utf-8")
+    )
+    return target
+
+
 def test_import_scan_json_creates_ledger_job(monkeypatch, tmp_path: Path) -> None:
     target = _write_codex_fixture(tmp_path)
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
@@ -112,6 +122,58 @@ def test_import_preview_json_returns_turns(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["turn_count"] == 2
     assert payload["turns"][0]["role"] == "user"
+
+
+def test_import_scan_json_supports_claude_code(monkeypatch, tmp_path: Path) -> None:
+    target = _write_claude_fixture(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "scan",
+            "--source",
+            "claude-code",
+            "--root",
+            str(target.parent.parent),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidate_count"] == 1
+    assert payload["candidates"][0]["source_type"] == "claude-code"
+    assert payload["candidates"][0]["session_id"] == "claude-session-1"
+    assert payload["job"]["source_type"] == "claude-code"
+
+
+def test_import_preview_json_supports_claude_code(monkeypatch, tmp_path: Path) -> None:
+    target = _write_claude_fixture(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "preview",
+            "--source",
+            "claude-code",
+            "--path",
+            str(target),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["turn_count"] == 2
+    assert payload["candidate"]["source_type"] == "claude-code"
+    assert payload["turns"][0]["role"] == "user"
+    assert payload["turns"][1]["role"] == "assistant"
 
 
 def test_import_jobs_lists_created_jobs(monkeypatch, tmp_path: Path) -> None:

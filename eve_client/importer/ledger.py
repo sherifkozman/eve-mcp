@@ -61,6 +61,7 @@ class ImportLedger:
                     session_id TEXT NOT NULL,
                     modified_at TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
+                    content_sha256 TEXT,
                     turn_count_hint INTEGER,
                     PRIMARY KEY (job_id, path),
                     FOREIGN KEY (job_id) REFERENCES import_jobs(job_id) ON DELETE CASCADE
@@ -106,6 +107,12 @@ class ImportLedger:
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(import_candidates)").fetchall()
+            }
+            if "content_sha256" not in columns:
+                conn.execute("ALTER TABLE import_candidates ADD COLUMN content_sha256 TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -151,8 +158,9 @@ class ImportLedger:
             conn.executemany(
                 """
                 INSERT INTO import_candidates (
-                    job_id, source_type, path, session_id, modified_at, size_bytes, turn_count_hint
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    job_id, source_type, path, session_id, modified_at, size_bytes, content_sha256,
+                    turn_count_hint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -162,6 +170,7 @@ class ImportLedger:
                         candidate.session_id,
                         candidate.modified_at.isoformat(),
                         candidate.size_bytes,
+                        candidate.content_sha256,
                         candidate.turn_count_hint,
                     )
                     for candidate in candidates
@@ -228,7 +237,7 @@ class ImportLedger:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT source_type, path, session_id, modified_at, size_bytes, turn_count_hint
+                SELECT source_type, path, session_id, modified_at, size_bytes, content_sha256, turn_count_hint
                 FROM import_candidates
                 WHERE job_id = ?
                 ORDER BY modified_at DESC
@@ -242,6 +251,7 @@ class ImportLedger:
                 session_id=row["session_id"],
                 modified_at=datetime.fromisoformat(row["modified_at"]),
                 size_bytes=row["size_bytes"],
+                content_sha256=row["content_sha256"] or "",
                 turn_count_hint=row["turn_count_hint"],
             )
             for row in rows
@@ -467,7 +477,7 @@ class ImportLedger:
             cursor = conn.execute(
                 """
                 UPDATE import_run_batches
-                SET status = 'failed', last_error = ?, updated_at = ?
+                SET status = 'pending', last_error = ?, updated_at = ?
                 WHERE run_id = ? AND status = 'submitting'
                 """,
                 ("Recovered interrupted upload attempt; retrying batch.", now, run_id),

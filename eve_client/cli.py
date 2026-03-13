@@ -103,8 +103,10 @@ def _parse_tools(raw_tools: list[str] | None) -> list[str] | None:
 
 def _normalize_import_source(value: str) -> ImportSourceType:
     normalized = value.strip().lower()
-    if normalized not in {"codex-cli", "gemini-cli"}:
-        raise typer.BadParameter("--source must be 'codex-cli' or 'gemini-cli'")
+    if normalized not in {"claude-code", "codex-cli", "gemini-cli"}:
+        raise typer.BadParameter(
+            "--source must be 'claude-code', 'codex-cli', or 'gemini-cli'"
+        )
     return normalized  # type: ignore[return-value]
 
 
@@ -666,7 +668,7 @@ def import_scan(
     limit: int = typer.Option(20, "--limit", min=1, max=200),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Scan local Codex or Gemini session files and persist a local scan ledger entry."""
+    """Scan local Claude Code, Codex, or Gemini session files and persist a local scan ledger entry."""
     config = resolve_config()
     source_type = _normalize_import_source(source) if source else None
     roots_by_source: dict[ImportSourceType, list[Path]] | None = None

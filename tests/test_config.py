@@ -250,6 +250,15 @@ def test_linux_uses_separate_config_and_state_dirs(monkeypatch, tmp_path: Path) 
     assert config.state_dir == tmp_path / "state" / "eve"
 
 
+def test_darwin_honors_xdg_overrides_for_config_and_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Darwin")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    config = resolve_config()
+    assert config.config_path == tmp_path / "cfg" / "eve" / "config.json"
+    assert config.state_dir == tmp_path / "state" / "eve"
+
+
 def test_update_local_config_writes_to_config_dir(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))

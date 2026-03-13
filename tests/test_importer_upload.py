@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -56,6 +57,7 @@ def _seed_job(tmp_path: Path) -> tuple[ImportLedger, object]:
     target = root / fixture.name
     target.write_text(fixture.read_text(encoding="utf-8"))
     stat_result = target.stat()
+    content_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
     job = ledger.create_scan_job(
         source_type="codex-cli",
         root_path=root.parent.parent.parent.parent,
@@ -66,6 +68,7 @@ def _seed_job(tmp_path: Path) -> tuple[ImportLedger, object]:
                 session_id="codex-session-1",
                 modified_at=datetime.fromtimestamp(stat_result.st_mtime, tz=UTC),
                 size_bytes=stat_result.st_size,
+                content_sha256=content_sha256,
                 turn_count_hint=2,
             )
         ],
@@ -102,6 +105,48 @@ def test_build_batches_for_job_uses_run_id_as_import_job_id(tmp_path: Path) -> N
             (run.run_id,),
         ).fetchone()[0]
     assert "Remember that I prefer concise release notes." not in raw_payload
+
+
+def test_build_batches_for_job_splits_oversized_chunks(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+
+    class _LargeTurnAdapter:
+        def parse(self, candidate):  # noqa: ANN001
+            huge = "x" * 50000
+            return [
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(lambda: {"role": "user", "content": huge}),
+                    },
+                )(),
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(lambda: {"role": "assistant", "content": huge}),
+                    },
+                )(),
+            ]
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", lambda source_type: _LargeTurnAdapter())
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 2
+    assert len(batches) == 2
+    assert all(batch.turn_count == 1 for batch in batches)
 
 
 def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
@@ -141,6 +186,102 @@ def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     assert result.run.status == "completed"
     assert result.batches[0].status == "uploaded"
     assert result.batches[0].remote_idempotency_key == "idem-1"
+
+
+def test_build_batches_for_job_rejects_changed_source_before_parse(tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    target = next(iter(ledger.get_job_candidates(job.job_id))).path
+    target.write_text('{"type":"session_meta","payload":{"id":"changed"}}\n', encoding="utf-8")
+
+    with pytest.raises(ImportUploadError, match="changed after scan"):
+        build_batches_for_job(
+            job=job,
+            ledger=ledger,
+            batch_size=10,
+            auth_source_tool="codex-cli",
+            auth_mode="oauth",
+            context_mode="PERSONAL",
+            source_priority=1,
+            min_importance=4,
+        )
+
+
+def test_build_batches_for_job_allows_legacy_candidates_without_content_hash(tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    target = next(iter(ledger.get_job_candidates(job.job_id))).path
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute(
+            "UPDATE import_candidates SET content_sha256 = NULL WHERE job_id = ? AND path = ?",
+            (job.job_id, str(target)),
+        )
+        conn.commit()
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 1
+    assert len(batches) == 1
+
+
+def test_upload_run_retries_same_batch_on_timeout(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    observed_timeouts: list[float] = []
+    attempts = {"count": 0}
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        observed_timeouts.append(kwargs["timeout"])
+        if attempts["count"] == 0:
+            attempts["count"] += 1
+            raise ImportUploadError("Connection failed: timed out")
+        return 200, {
+            "status": "completed",
+            "idempotency_key": "idem-retry",
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+        timeout=1.0,
+    )
+
+    assert result.run.status == "completed"
+    assert attempts["count"] == 1
+    assert len(result.batches) == 1
+    assert result.batches[0].status == "uploaded"
+    assert result.batches[0].remote_idempotency_key == "idem-retry"
+    assert len(observed_timeouts) == 2
+    assert observed_timeouts[0] >= 1.0
+    assert observed_timeouts[1] >= observed_timeouts[0]
 
 
 def test_upload_run_locks_on_ledger_directory_not_config_state_dir(
@@ -198,6 +339,89 @@ def test_upload_run_locks_on_ledger_directory_not_config_state_dir(
 
     assert result.run.status == "completed"
     assert captured == [ledger.path.parent]
+
+
+def test_upload_run_retries_failed_batches(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    batch = ledger.get_run_batches(run.run_id)[0]
+    ledger.fail_batch(batch_id=batch.batch_id, status="failed", error="temporary error")
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "completed",
+            "idempotency_key": "idem-retry-failed",
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=ledger.get_run(run.run_id),
+    )
+
+    assert result.run.status == "completed"
+    assert result.batches[0].status == "uploaded"
+
+
+def test_upload_run_does_not_send_local_candidate_path(monkeypatch, tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    seen_payloads: list[dict[str, object]] = []
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        seen_payloads.append(kwargs["payload"])
+        return 200, {
+            "status": "completed",
+            "idempotency_key": "idem-safe",
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    upload_run(
+        config=config,
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert seen_payloads
+    payload_blob = json.dumps(seen_payloads[0], sort_keys=True)
+    assert "candidate_path" not in payload_blob
+    assert str(tmp_path) not in payload_blob
     assert config.state_dir != ledger.path.parent
 
 
@@ -334,6 +558,40 @@ def test_build_batches_for_job_rejects_empty_scan_job(tmp_path: Path) -> None:
             batch_size=10,
             auth_source_tool="codex-cli",
             auth_mode="api-key",
+            context_mode="PERSONAL",
+            source_priority=1,
+            min_importance=4,
+        )
+
+
+def test_build_batches_for_job_rejects_single_oversized_turn(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+
+    class _HugeSingleTurnAdapter:
+        def parse(self, candidate):  # noqa: ANN001
+            huge = "x" * 100000
+            return [
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(lambda: {"role": "user", "content": huge}),
+                    },
+                )(),
+            ]
+
+    monkeypatch.setattr(
+        "eve_client.importer.upload.get_adapter", lambda source_type: _HugeSingleTurnAdapter()
+    )
+
+    with pytest.raises(ImportUploadError, match="single turn that exceeds the maximum upload batch size"):
+        build_batches_for_job(
+            job=job,
+            ledger=ledger,
+            batch_size=10,
+            auth_source_tool="codex-cli",
+            auth_mode="oauth",
             context_mode="PERSONAL",
             source_priority=1,
             min_importance=4,

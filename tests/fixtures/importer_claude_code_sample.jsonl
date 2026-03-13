@@ -1,0 +1,3 @@
+{"cwd":"/Users/example/project","sessionId":"claude-session-1","version":"2.1.45","type":"progress","data":{"type":"hook_progress","hookEvent":"SessionStart"}}
+{"cwd":"/Users/example/project","sessionId":"claude-session-1","version":"2.1.45","type":"user","message":{"role":"user","content":"Remember that we prefer small importer batches."},"timestamp":"2026-03-10T12:00:00Z"}
+{"cwd":"/Users/example/project","sessionId":"claude-session-1","version":"2.1.45","message":{"role":"assistant","content":[{"type":"thinking","thinking":"internal"},{"type":"text","text":"I will keep the importer batches small and resumable."}]},"timestamp":"2026-03-10T12:00:01Z"}

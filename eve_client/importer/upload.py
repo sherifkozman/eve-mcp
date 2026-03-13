@@ -29,6 +29,9 @@ from eve_client.models import ToolName
 
 _IMPORT_BATCH_PATH = "/memory/import/batch"
 _SUPPORTED_AUTH_TOOLS: tuple[ToolName, ...] = ("claude-code", "gemini-cli", "codex-cli")
+_MAX_BATCH_REQUEST_BYTES = 64 * 1024
+_MAX_UPLOAD_TIMEOUT_SECONDS = 180.0
+_TRANSPORT_RETRY_ATTEMPTS = 1
 
 
 class ImportUploadError(RuntimeError):
@@ -123,8 +126,145 @@ def _request_batch(
             return response.status, _parse_response(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, _parse_response(exc.read().decode("utf-8"))
+    except TimeoutError as exc:
+        raise ImportUploadError(f"Connection failed: {_sanitize_error(exc)}") from exc
     except urllib.error.URLError as exc:
         raise ImportUploadError(f"Connection failed: {_sanitize_error(exc.reason)}") from exc
+
+
+def _estimate_request_bytes(
+    *,
+    run_id: str,
+    source_type: str,
+    session_id: str,
+    context_mode: str,
+    source_priority: int,
+    min_importance: int,
+    candidate: ImportCandidate,
+    turns: list[ImportTurn],
+) -> int:
+    payload = {
+        "import_job_id": run_id,
+        "source_system": source_type,
+        "session_id": session_id,
+        "turns": [turn.to_dict() for turn in turns],
+        "context_mode": context_mode,
+        "source_priority": source_priority,
+        "min_importance": min_importance,
+        "idempotency_key": "batch_preview",
+    }
+    return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+_SENSITIVE_METADATA_KEYS = {"path", "file_path", "source_path", "cwd"}
+
+
+def _sanitize_metadata_value(value: object) -> object:
+    if isinstance(value, dict):
+        sanitized: dict[str, object] = {}
+        for key, nested_value in value.items():
+            if key in _SENSITIVE_METADATA_KEYS:
+                continue
+            sanitized[key] = _sanitize_metadata_value(nested_value)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_metadata_value(item) for item in value]
+    return value
+
+
+def _sanitize_turn_dicts_for_transport(turn_dicts: list[dict[str, object]]) -> list[dict[str, object]]:
+    sanitized_turns: list[dict[str, object]] = []
+    for turn in turn_dicts:
+        sanitized_turn: dict[str, object] = {}
+        for key, value in turn.items():
+            if key == "metadata" and isinstance(value, dict):
+                sanitized_turn[key] = _sanitize_metadata_value(value)
+            else:
+                sanitized_turn[key] = value
+        sanitized_turns.append(sanitized_turn)
+    return sanitized_turns
+
+
+def _slice_turn_groups(
+    *,
+    run_id: str,
+    candidate: ImportCandidate,
+    turns: list[ImportTurn],
+    batch_size: int,
+    context_mode: str,
+    source_priority: int,
+    min_importance: int,
+) -> list[tuple[int, list[ImportTurn]]]:
+    turn_groups: list[tuple[int, list[ImportTurn]]] = []
+    for turn_offset in range(0, len(turns), batch_size):
+        chunk = turns[turn_offset : turn_offset + batch_size]
+        pending: list[tuple[int, list[ImportTurn]]] = [(turn_offset, chunk)]
+        while pending:
+            current_offset, current_chunk = pending.pop(0)
+            estimated_bytes = _estimate_request_bytes(
+                run_id=run_id,
+                source_type=candidate.source_type,
+                session_id=candidate.session_id,
+                context_mode=context_mode,
+                source_priority=source_priority,
+                min_importance=min_importance,
+                candidate=candidate,
+                turns=current_chunk,
+            )
+            if len(current_chunk) <= 1:
+                if estimated_bytes > _MAX_BATCH_REQUEST_BYTES:
+                    raise ImportUploadError(
+                        "Importer source contains a single turn that exceeds the maximum upload batch size."
+                    )
+                turn_groups.append((current_offset, current_chunk))
+                continue
+            if estimated_bytes <= _MAX_BATCH_REQUEST_BYTES:
+                turn_groups.append((current_offset, current_chunk))
+                continue
+            split_index = max(1, len(current_chunk) // 2)
+            pending.insert(0, (current_offset + split_index, current_chunk[split_index:]))
+            pending.insert(0, (current_offset, current_chunk[:split_index]))
+    return turn_groups
+
+
+def _is_retryable_transport_error(exc: ImportUploadError) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in ("timed out", "timeout", "temporarily unavailable", "connection reset", "connection aborted")
+    )
+
+
+def _is_retryable_batch_failure(batch: ImportBatch) -> bool:
+    if batch.status != "failed":
+        return False
+    error = (batch.last_error or "").lower()
+    return any(
+        token in error
+        for token in (
+            "transient",
+            "temporary",
+            "network",
+            "connection failed",
+            "timeout",
+            "timed out",
+            "temporarily unavailable",
+            "connection reset",
+            "connection aborted",
+        )
+    )
+
+
+def _effective_timeout(*, payload: dict[str, object], base_timeout: float) -> float:
+    payload_bytes = len(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    )
+    turn_count = len(payload.get("turns", [])) if isinstance(payload.get("turns"), list) else 0
+    dynamic_timeout = max(
+        base_timeout,
+        15.0 + (payload_bytes / 1024.0) * 0.5 + turn_count * 5.0,
+    )
+    return min(dynamic_timeout, _MAX_UPLOAD_TIMEOUT_SECONDS)
 
 
 def _batch_payload(
@@ -141,7 +281,7 @@ def _batch_payload(
     candidate: ImportCandidate,
     turns: list[ImportTurn],
 ) -> dict[str, object]:
-    batch_turns = [turn.to_dict() for turn in turns]
+    batch_turns = _sanitize_turn_dicts_for_transport([turn.to_dict() for turn in turns])
     batch_hash = hashlib.sha256(
         json.dumps(batch_turns, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()
@@ -159,6 +299,7 @@ def _batch_payload(
             "session_id": candidate.session_id,
             "modified_at": candidate.modified_at.isoformat(),
             "size_bytes": candidate.size_bytes,
+            "content_sha256": candidate.content_sha256,
         },
         "turn_offset": turn_offset,
         "turn_count": turn_count,
@@ -176,6 +317,7 @@ def _candidate_from_payload(payload: dict[str, object]) -> ImportCandidate:
         session_id = str(candidate["session_id"])
         modified_at = datetime.fromisoformat(str(candidate["modified_at"]))
         size_bytes = int(candidate["size_bytes"])
+        content_sha256 = str(candidate["content_sha256"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ImportUploadError("Importer run batch contains invalid candidate snapshot") from exc
     return ImportCandidate(
@@ -184,6 +326,7 @@ def _candidate_from_payload(payload: dict[str, object]) -> ImportCandidate:
         session_id=session_id,
         modified_at=modified_at if modified_at.tzinfo else modified_at.replace(tzinfo=UTC),
         size_bytes=size_bytes,
+        content_sha256=content_sha256,
     )
 
 
@@ -198,6 +341,13 @@ def _validate_candidate_snapshot(candidate: ImportCandidate) -> None:
     if current_size != candidate.size_bytes:
         raise ImportUploadError(
             "Importer source changed after scan; rerun `eve import scan` before uploading."
+        )
+    if not candidate.content_sha256:
+        return
+    current_hash = hashlib.sha256(candidate.path.read_bytes()).hexdigest()
+    if current_hash != candidate.content_sha256:
+        raise ImportUploadError(
+            "Importer source content changed after scan; rerun `eve import scan` before uploading."
         )
 
 
@@ -227,7 +377,7 @@ def _materialize_request_payload(batch: ImportBatch) -> dict[str, object]:
         raise ImportUploadError(
             "Importer source no longer matches the scanned turn layout; rerun `eve import scan`."
         )
-    batch_turns = [turn.to_dict() for turn in chunk]
+    batch_turns = _sanitize_turn_dicts_for_transport([turn.to_dict() for turn in chunk])
     batch_hash = hashlib.sha256(
         json.dumps(batch_turns, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()
@@ -245,7 +395,6 @@ def _materialize_request_payload(batch: ImportBatch) -> dict[str, object]:
         "source_priority": payload["source_priority"],
         "min_importance": payload["min_importance"],
         "idempotency_key": payload["batch_id"],
-        "metadata": {"candidate_path": str(candidate.path)},
     }
 
 
@@ -271,6 +420,7 @@ def build_batches_for_job(
     batches: list[ImportBatch] = []
     batch_index = 0
     for candidate in candidates:
+        _validate_candidate_snapshot(candidate)
         try:
             adapter = get_adapter(candidate.source_type)
         except KeyError as exc:
@@ -283,8 +433,16 @@ def build_batches_for_job(
             raise ImportUploadError(
                 f"Failed to parse importer source {candidate.path}: {_sanitize_error(exc)}"
             ) from exc
-        for turn_offset in range(0, len(turns), batch_size):
-            chunk = turns[turn_offset : turn_offset + batch_size]
+        turn_groups = _slice_turn_groups(
+            run_id=run_id,
+            candidate=candidate,
+            turns=turns,
+            batch_size=batch_size,
+            context_mode=context_mode,
+            source_priority=source_priority,
+            min_importance=min_importance,
+        )
+        for turn_offset, chunk in turn_groups:
             batch_id = f"batch_{uuid.uuid4().hex}"
             request_payload = _batch_payload(
                 batch_id=batch_id,
@@ -357,21 +515,43 @@ def upload_run(
     with installer_lock(ledger.path.parent):
         ledger.update_run_status(run.run_id, status="running", last_error=None)
         ledger.recover_submitting_batches(run.run_id)
-        current_batch_id: str | None = None
         try:
-            for batch in ledger.get_run_batches(run.run_id):
-                if batch.status in {"uploaded", "conflict"}:
-                    continue
+            while True:
+                batch = next(
+                    (
+                        item
+                        for item in ledger.get_run_batches(run.run_id)
+                        if item.status == "pending" or _is_retryable_batch_failure(item)
+                    ),
+                    None,
+                )
+                if batch is None:
+                    break
                 if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
                     continue
-                current_batch_id = batch.batch_id
                 payload = _materialize_request_payload(batch)
-                status_code, response = _request_batch(
-                    config=config,
-                    headers=headers,
-                    payload=payload,
-                    timeout=timeout,
-                )
+                effective_timeout = _effective_timeout(payload=payload, base_timeout=timeout)
+                attempt = 0
+                while True:
+                    try:
+                        status_code, response = _request_batch(
+                            config=config,
+                            headers=headers,
+                            payload=payload,
+                            timeout=effective_timeout,
+                        )
+                        break
+                    except ImportUploadError as exc:
+                        # Preserve the same idempotency key when retrying after transport
+                        # failures. The request may have reached the server and only the
+                        # response path failed, so splitting into fresh child batch IDs here
+                        # risks duplicate imports.
+                        if attempt >= _TRANSPORT_RETRY_ATTEMPTS or not _is_retryable_transport_error(exc):
+                            raise
+                        attempt += 1
+                        effective_timeout = min(effective_timeout * 2, _MAX_UPLOAD_TIMEOUT_SECONDS)
+                if batch.batch_id not in {item.batch_id for item in ledger.get_run_batches(run.run_id)}:
+                    continue
                 if status_code == 200 and response is not None:
                     remote_status = str(response.get("status", "")).strip().lower()
                     result_summary = response.get("result_summary", {}) or {}
@@ -412,11 +592,14 @@ def upload_run(
                     if isinstance(response, dict):
                         detail = response.get("detail") or response.get("error") or detail
                     ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=_sanitize_error(detail))
-                current_batch_id = None
         except ImportUploadError as exc:
-            if current_batch_id is not None:
+            current_batch = next(
+                (item for item in ledger.get_run_batches(run.run_id) if item.status == "submitting"),
+                None,
+            )
+            if current_batch is not None:
                 ledger.fail_batch(
-                    batch_id=current_batch_id,
+                    batch_id=current_batch.batch_id,
                     status="failed",
                     error=_sanitize_error(exc),
                 )
