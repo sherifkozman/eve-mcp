@@ -868,7 +868,8 @@ def import_upload(
             bearer_token=bearer_token,
         )
     except ImportUploadError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        typer.secho(f"Error: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
     payload = _import_run_payload(result)
     if json_output:
         console.print_json(json.dumps(payload))
@@ -911,7 +912,8 @@ def import_resume(
             bearer_token=bearer_token,
         )
     except ImportUploadError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        typer.secho(f"Error: {exc}", err=True, fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
     payload = _import_run_payload(result)
     if json_output:
         console.print_json(json.dumps(payload))

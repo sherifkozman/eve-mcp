@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import typer
 from eve_client.cli import app
+from eve_client.importer import ImportUploadError
 from eve_client.importer.models import ImportBatch, ImportRun
 from typer.testing import CliRunner
 
@@ -344,6 +345,104 @@ def test_import_resume_json_success(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["run"]["run_id"] == run.run_id
     assert payload["run"]["status"] == "completed"
+
+
+def test_import_upload_runtime_error_exits_cleanly(monkeypatch, tmp_path: Path) -> None:
+    target = _write_codex_fixture(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    scan_result = runner.invoke(
+        app,
+        [
+            "import",
+            "scan",
+            "--source",
+            "codex-cli",
+            "--root",
+            str(target.parent.parent.parent.parent),
+            "--json",
+        ],
+    )
+    job = json.loads(scan_result.stdout)["job"]
+
+    def _raise_upload_error(**kwargs):  # noqa: ANN003
+        raise ImportUploadError("Connection failed")
+
+    monkeypatch.setattr("eve_client.cli.upload_run", _raise_upload_error)
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "upload",
+            "--job",
+            job["job_id"],
+            "--use-auth-from",
+            "codex-cli",
+            "--api-key",
+            "eve_test_key",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Error: Connection failed" in result.stderr
+
+
+def test_import_resume_runtime_error_exits_cleanly(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    from eve_client.cli import _import_ledger  # local import to use configured paths
+    from eve_client.config import resolve_config
+
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    scan_job = ledger.create_scan_job(source_type="codex-cli", root_path=tmp_path, candidates=[])
+    run = ledger.create_run(
+        run_id="run_resume",
+        scan_job_id=scan_job.job_id,
+        auth_source_tool="codex-cli",
+        auth_mode="api-key",
+        batch_size=50,
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+        batches=[
+            ImportBatch(
+                run_id="",
+                batch_id="batch_resume",
+                batch_index=0,
+                candidate_path=tmp_path / "artifact.jsonl",
+                source_type="codex-cli",
+                session_id="session-1",
+                turn_offset=0,
+                turn_count=1,
+                status="failed",
+                request_payload={"import_job_id": "run_resume", "turns": []},
+            )
+        ],
+    )
+
+    def _raise_upload_error(**kwargs):  # noqa: ANN003
+        raise ImportUploadError("Connection failed")
+
+    monkeypatch.setattr("eve_client.cli.upload_run", _raise_upload_error)
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "resume",
+            "--run",
+            run.run_id,
+            "--api-key",
+            "eve_test_key",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Error: Connection failed" in result.stderr
 
 
 def test_normalize_import_context_mode_rejects_invalid_value() -> None:
