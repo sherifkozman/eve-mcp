@@ -188,6 +188,57 @@ def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     assert result.batches[0].remote_idempotency_key == "idem-1"
 
 
+def test_upload_run_allows_legacy_persisted_batch_payload_without_content_hash(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    first_batch = batches[0]
+    legacy_payload = json.loads(json.dumps(first_batch.request_payload))
+    assert isinstance(legacy_payload["candidate"], dict)
+    legacy_payload["candidate"].pop("content_sha256", None)
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute(
+            "UPDATE import_run_batches SET request_payload = ? WHERE batch_id = ?",
+            (json.dumps(legacy_payload, separators=(",", ":")), first_batch.batch_id),
+        )
+        conn.commit()
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "completed",
+            "idempotency_key": "idem-legacy",
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "completed"
+    assert result.batches[0].status == "uploaded"
+
+
 def test_build_batches_for_job_rejects_changed_source_before_parse(tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None

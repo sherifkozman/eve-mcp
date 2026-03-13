@@ -317,7 +317,7 @@ def _candidate_from_payload(payload: dict[str, object]) -> ImportCandidate:
         session_id = str(candidate["session_id"])
         modified_at = datetime.fromisoformat(str(candidate["modified_at"]))
         size_bytes = int(candidate["size_bytes"])
-        content_sha256 = str(candidate["content_sha256"])
+        content_sha256 = str(candidate.get("content_sha256") or "")
     except (KeyError, TypeError, ValueError) as exc:
         raise ImportUploadError("Importer run batch contains invalid candidate snapshot") from exc
     return ImportCandidate(
