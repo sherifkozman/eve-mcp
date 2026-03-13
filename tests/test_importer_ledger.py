@@ -188,84 +188,9 @@ def test_import_ledger_marks_batch_submitting_only_once(tmp_path: Path) -> None:
     batch = ledger.get_run_batches(run.run_id)[0]
     assert batch.status == "submitting"
 
-
-def test_import_ledger_replaces_batch_with_split_batches(tmp_path: Path) -> None:
-    ledger = ImportLedger(tmp_path / "state" / "importer.sqlite3")
-    job = ledger.create_scan_job(source_type="codex-cli", root_path=tmp_path, candidates=[])
-    run = ledger.create_run(
-        run_id="run_split",
-        scan_job_id=job.job_id,
-        auth_source_tool="codex-cli",
-        auth_mode="oauth",
-        batch_size=10,
-        context_mode="PERSONAL",
-        source_priority=1,
-        min_importance=4,
-        batches=[
-            ImportBatch(
-                run_id="",
-                batch_id="batch_original",
-                batch_index=0,
-                candidate_path=tmp_path / "a.jsonl",
-                source_type="codex-cli",
-                session_id="s1",
-                turn_offset=0,
-                turn_count=4,
-                status="pending",
-                request_payload={"import_job_id": "run_split"},
-            ),
-            ImportBatch(
-                run_id="",
-                batch_id="batch_later",
-                batch_index=1,
-                candidate_path=tmp_path / "b.jsonl",
-                source_type="codex-cli",
-                session_id="s2",
-                turn_offset=0,
-                turn_count=1,
-                status="pending",
-                request_payload={"import_job_id": "run_split"},
-            ),
-        ],
-    )
-
-    ledger.replace_batch_with_batches(
-        batch_id="batch_original",
-        batches=[
-            ImportBatch(
-                run_id=run.run_id,
-                batch_id="batch_split_1",
-                batch_index=0,
-                candidate_path=tmp_path / "a.jsonl",
-                source_type="codex-cli",
-                session_id="s1",
-                turn_offset=0,
-                turn_count=2,
-                status="pending",
-                request_payload={"import_job_id": "run_split"},
-            ),
-            ImportBatch(
-                run_id=run.run_id,
-                batch_id="batch_split_2",
-                batch_index=1,
-                candidate_path=tmp_path / "a.jsonl",
-                source_type="codex-cli",
-                session_id="s1",
-                turn_offset=2,
-                turn_count=2,
-                status="pending",
-                request_payload={"import_job_id": "run_split"},
-            ),
-        ],
-    )
-
     stored_run = ledger.get_run(run.run_id)
     stored_batches = ledger.get_run_batches(run.run_id)
     assert stored_run is not None
-    assert stored_run.batch_count == 3
-    assert [batch.batch_id for batch in stored_batches] == [
-        "batch_split_1",
-        "batch_split_2",
-        "batch_later",
-    ]
-    assert [batch.batch_index for batch in stored_batches] == [0, 1, 2]
+    assert stored_run.batch_count == 1
+    assert [batch.batch_id for batch in stored_batches] == ["batch_claim"]
+    assert [batch.batch_index for batch in stored_batches] == [0]

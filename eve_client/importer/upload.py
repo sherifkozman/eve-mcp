@@ -307,45 +307,6 @@ def _batch_payload(
     }
 
 
-def _batch_payload_from_turn_dicts(
-    *,
-    batch_id: str,
-    parent_payload: dict[str, object],
-    candidate: ImportCandidate,
-    turn_offset: int,
-    turn_dicts: list[dict[str, object]],
-) -> dict[str, object]:
-    sanitized_turn_dicts = _sanitize_turn_dicts_for_transport(turn_dicts)
-    batch_hash = hashlib.sha256(
-        json.dumps(
-            sanitized_turn_dicts,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest()
-    return {
-        "batch_id": batch_id,
-        "import_job_id": parent_payload["import_job_id"],
-        "source_system": parent_payload["source_system"],
-        "session_id": parent_payload["session_id"],
-        "context_mode": parent_payload["context_mode"],
-        "source_priority": parent_payload["source_priority"],
-        "min_importance": parent_payload["min_importance"],
-        "candidate": {
-            "source_type": candidate.source_type,
-            "path": str(candidate.path),
-            "session_id": candidate.session_id,
-            "modified_at": candidate.modified_at.isoformat(),
-            "size_bytes": candidate.size_bytes,
-            "content_sha256": candidate.content_sha256,
-        },
-        "turn_offset": turn_offset,
-        "turn_count": len(sanitized_turn_dicts),
-        "batch_hash": batch_hash,
-    }
-
-
 def _candidate_from_payload(payload: dict[str, object]) -> ImportCandidate:
     candidate = payload.get("candidate")
     if not isinstance(candidate, dict):
@@ -381,6 +342,8 @@ def _validate_candidate_snapshot(candidate: ImportCandidate) -> None:
         raise ImportUploadError(
             "Importer source changed after scan; rerun `eve import scan` before uploading."
         )
+    if not candidate.content_sha256:
+        return
     current_hash = hashlib.sha256(candidate.path.read_bytes()).hexdigest()
     if current_hash != candidate.content_sha256:
         raise ImportUploadError(
@@ -433,61 +396,6 @@ def _materialize_request_payload(batch: ImportBatch) -> dict[str, object]:
         "min_importance": payload["min_importance"],
         "idempotency_key": payload["batch_id"],
     }
-
-
-def _split_batch_for_retry(batch: ImportBatch) -> list[ImportBatch]:
-    payload = _materialize_request_payload(batch)
-    candidate = _candidate_from_payload(batch.request_payload)
-    turn_dicts = payload["turns"]
-    if not isinstance(turn_dicts, list) or len(turn_dicts) <= 1:
-        raise ImportUploadError("Cannot split importer batch further.")
-    split_index = max(1, len(turn_dicts) // 2)
-    first_turns = turn_dicts[:split_index]
-    second_turns = turn_dicts[split_index:]
-    first_batch_id = f"batch_{uuid.uuid4().hex}"
-    second_batch_id = f"batch_{uuid.uuid4().hex}"
-    first_offset = batch.turn_offset
-    second_offset = batch.turn_offset + split_index
-    first_payload = _batch_payload_from_turn_dicts(
-        batch_id=first_batch_id,
-        parent_payload=batch.request_payload,
-        candidate=candidate,
-        turn_offset=first_offset,
-        turn_dicts=first_turns,
-    )
-    second_payload = _batch_payload_from_turn_dicts(
-        batch_id=second_batch_id,
-        parent_payload=batch.request_payload,
-        candidate=candidate,
-        turn_offset=second_offset,
-        turn_dicts=second_turns,
-    )
-    return [
-        ImportBatch(
-            run_id=batch.run_id,
-            batch_id=first_batch_id,
-            batch_index=batch.batch_index,
-            candidate_path=batch.candidate_path,
-            source_type=batch.source_type,
-            session_id=batch.session_id,
-            turn_offset=first_offset,
-            turn_count=len(first_turns),
-            status="pending",
-            request_payload=first_payload,
-        ),
-        ImportBatch(
-            run_id=batch.run_id,
-            batch_id=second_batch_id,
-            batch_index=batch.batch_index + 1,
-            candidate_path=batch.candidate_path,
-            source_type=batch.source_type,
-            session_id=batch.session_id,
-            turn_offset=second_offset,
-            turn_count=len(second_turns),
-            status="pending",
-            request_payload=second_payload,
-        ),
-    ]
 
 
 def build_batches_for_job(

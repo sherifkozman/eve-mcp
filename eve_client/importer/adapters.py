@@ -114,17 +114,18 @@ class ClaudeCodeAdapter:
                         message.get("content") if isinstance(message, dict) else None
                     ):
                         turn_count += 1
+            stat = path.stat()
+            modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+            content_sha256 = _file_sha256(path)
         except (OSError, json.JSONDecodeError):
             return None
-        stat = path.stat()
-        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
         return ImportCandidate(
             source_type=self.source_type,
             path=path,
             session_id=session_id,
             modified_at=modified_at,
             size_bytes=stat.st_size,
-            content_sha256=_file_sha256(path),
+            content_sha256=content_sha256,
             turn_count_hint=turn_count or None,
         )
 

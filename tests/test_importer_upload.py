@@ -207,6 +207,32 @@ def test_build_batches_for_job_rejects_changed_source_before_parse(tmp_path: Pat
         )
 
 
+def test_build_batches_for_job_allows_legacy_candidates_without_content_hash(tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    target = next(iter(ledger.get_job_candidates(job.job_id))).path
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute(
+            "UPDATE import_candidates SET content_sha256 = NULL WHERE job_id = ? AND path = ?",
+            (job.job_id, str(target)),
+        )
+        conn.commit()
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 1
+    assert len(batches) == 1
+
+
 def test_upload_run_retries_same_batch_on_timeout(monkeypatch, tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None
