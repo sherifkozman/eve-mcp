@@ -149,6 +149,104 @@ def test_build_batches_for_job_splits_oversized_chunks(monkeypatch, tmp_path: Pa
     assert all(batch.turn_count == 1 for batch in batches)
 
 
+def test_build_batches_for_job_caps_claude_batches_by_source(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    candidate = next(iter(ledger.get_job_candidates(job.job_id)))
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute(
+            "UPDATE import_candidates SET source_type = ?, session_id = ? WHERE job_id = ? AND path = ?",
+            ("claude-code", "claude-session-1", job.job_id, str(candidate.path)),
+        )
+        conn.execute(
+            "UPDATE import_jobs SET source_type = ? WHERE job_id = ?",
+            ("claude-code", job.job_id),
+        )
+        conn.commit()
+    job = ledger.get_job(job.job_id)
+    assert job is not None
+
+    class _ClaudeAdapter:
+        def parse(self, candidate):  # noqa: ANN001
+            return [
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(
+                            lambda idx=idx: {"role": "user", "content": f"turn-{idx}"}
+                        ),
+                    },
+                )()
+                for idx in range(20)
+            ]
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", lambda source_type: _ClaudeAdapter())
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=50,
+        auth_source_tool="claude-code",
+        auth_mode="api-key",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 3
+    assert [batch.turn_count for batch in batches] == [8, 8, 4]
+
+
+def test_build_batches_for_job_respects_smaller_explicit_batch_size(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    candidate = next(iter(ledger.get_job_candidates(job.job_id)))
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute(
+            "UPDATE import_candidates SET source_type = ?, session_id = ? WHERE job_id = ? AND path = ?",
+            ("claude-code", "claude-session-1", job.job_id, str(candidate.path)),
+        )
+        conn.execute(
+            "UPDATE import_jobs SET source_type = ? WHERE job_id = ?",
+            ("claude-code", job.job_id),
+        )
+        conn.commit()
+    job = ledger.get_job(job.job_id)
+    assert job is not None
+
+    class _ClaudeAdapter:
+        def parse(self, candidate):  # noqa: ANN001
+            return [
+                type(
+                    "_Turn",
+                    (),
+                    {
+                        "to_dict": staticmethod(
+                            lambda idx=idx: {"role": "user", "content": f"turn-{idx}"}
+                        ),
+                    },
+                )()
+                for idx in range(5)
+            ]
+
+    monkeypatch.setattr("eve_client.importer.upload.get_adapter", lambda source_type: _ClaudeAdapter())
+
+    run, batches = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=2,
+        auth_source_tool="claude-code",
+        auth_mode="api-key",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    assert run.batch_count == 3
+    assert [batch.turn_count for batch in batches] == [2, 2, 1]
+
+
 def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None

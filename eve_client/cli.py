@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import webbrowser
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode, urljoin, urlparse
@@ -58,7 +59,10 @@ from eve_client.uninstall import UninstallError, uninstall_tools
 from eve_client.verify import verify_tools
 
 app = typer.Typer(name="eve", help="Eve client installer and tool integration manager.")
-import_app = typer.Typer(name="import", help="Local importer workflow for Codex and Gemini data.")
+import_app = typer.Typer(
+    name="import",
+    help="Local importer workflow for Claude Code, Codex, and Gemini data.",
+)
 app.add_typer(import_app, name="import")
 console = Console()
 CODEX_BEARER_TOKEN_ENV_VAR = "EVE_CODEX_BEARER_TOKEN"
@@ -824,6 +828,49 @@ def import_runs(json_output: bool = typer.Option(False, "--json")) -> None:
             run.updated_at.isoformat(timespec="seconds"),
         )
     console.print(table)
+
+
+@import_app.command("cleanup")
+def import_cleanup(
+    days: int = typer.Option(30, "--days", min=1),
+    include_scan_jobs: bool = typer.Option(False, "--include-scan-jobs"),
+    vacuum: bool = typer.Option(False, "--vacuum"),
+    apply: bool = typer.Option(False, "--apply"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Review or prune old completed importer runs from the local Eve state ledger."""
+    if vacuum and not apply:
+        raise typer.BadParameter("--vacuum requires --apply")
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    cutoff_at = datetime.now(tz=UTC) - timedelta(days=days)
+    summary = ledger.cleanup(
+        cutoff_at=cutoff_at,
+        prune_orphaned_jobs=include_scan_jobs,
+        apply=apply,
+        vacuum=vacuum,
+    )
+    payload = {
+        "mode": "apply" if apply else "dry-run",
+        "summary": summary.to_dict(),
+    }
+    if json_output:
+        console.print_json(json.dumps(payload))
+        return
+    title = "Eve Import Cleanup" if apply else "Eve Import Cleanup (dry run)"
+    console.print(Panel(f"[bold]{title}[/bold]", style="yellow"))
+    console.print(f"Cutoff: [bold]{summary.cutoff_at.isoformat(timespec='seconds')}[/bold]")
+    table = Table(title="Cleanup summary")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Completed runs", str(summary.completed_runs_pruned))
+    table.add_row("Batch rows", str(summary.batches_pruned))
+    table.add_row("Orphaned scan jobs", str(summary.orphaned_jobs_pruned))
+    table.add_row("Candidate rows", str(summary.candidates_pruned))
+    table.add_row("Vacuumed", "yes" if summary.vacuumed else "no")
+    console.print(table)
+    if not apply:
+        console.print("[dim]Use --apply to persist the cleanup.[/dim]")
 
 
 @import_app.command("upload")

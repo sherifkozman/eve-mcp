@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -257,6 +259,168 @@ def test_import_runs_lists_created_runs(monkeypatch, tmp_path: Path) -> None:
     payload = json.loads(runs_result.stdout)
     assert len(payload) == 1
     assert payload[0]["scan_job_id"] == job["job_id"]
+
+
+def test_import_cleanup_json_dry_run_reports_counts_without_mutating(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    from eve_client.cli import _import_ledger
+    from eve_client.config import resolve_config
+
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    scan_job = ledger.create_scan_job(source_type="codex-cli", root_path=tmp_path, candidates=[])
+    run = ledger.create_run(
+        run_id="run_cleanup",
+        scan_job_id=scan_job.job_id,
+        auth_source_tool="codex-cli",
+        auth_mode="api-key",
+        batch_size=10,
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+        batches=[
+            ImportBatch(
+                run_id="",
+                batch_id="batch_cleanup",
+                batch_index=0,
+                candidate_path=tmp_path / "artifact.jsonl",
+                source_type="codex-cli",
+                session_id="session-1",
+                turn_offset=0,
+                turn_count=1,
+                status="uploaded",
+                request_payload={"import_job_id": "run_cleanup", "turns": []},
+            )
+        ],
+    )
+    ledger.update_run_status(run.run_id, status="completed")
+    cutoff_at = datetime.now(tz=UTC) - timedelta(days=30)
+    old_iso = (cutoff_at - timedelta(days=1)).isoformat()
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute("UPDATE import_runs SET completed_at = ? WHERE run_id = ?", (old_iso, run.run_id))
+        conn.commit()
+
+    result = runner.invoke(app, ["import", "cleanup", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "dry-run"
+    assert payload["summary"]["completed_runs_pruned"] == 1
+    assert ledger.get_run(run.run_id) is not None
+
+
+def test_import_cleanup_apply_json_prunes_runs_and_orphaned_jobs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    from eve_client.cli import _import_ledger
+    from eve_client.config import resolve_config
+
+    config = resolve_config()
+    ledger = _import_ledger(config)
+    pruned_job = ledger.create_scan_job(source_type="codex-cli", root_path=tmp_path, candidates=[])
+    protected_job = ledger.create_scan_job(source_type="codex-cli", root_path=tmp_path, candidates=[])
+    orphan_job = ledger.create_scan_job(source_type="gemini-cli", root_path=tmp_path, candidates=[])
+    run = ledger.create_run(
+        run_id="run_cleanup",
+        scan_job_id=pruned_job.job_id,
+        auth_source_tool="codex-cli",
+        auth_mode="api-key",
+        batch_size=10,
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+        batches=[
+            ImportBatch(
+                run_id="",
+                batch_id="batch_cleanup",
+                batch_index=0,
+                candidate_path=tmp_path / "artifact.jsonl",
+                source_type="codex-cli",
+                session_id="session-1",
+                turn_offset=0,
+                turn_count=1,
+                status="uploaded",
+                request_payload={"import_job_id": "run_cleanup", "turns": []},
+            )
+        ],
+    )
+    protected_run = ledger.create_run(
+        run_id="run_keep",
+        scan_job_id=protected_job.job_id,
+        auth_source_tool="codex-cli",
+        auth_mode="api-key",
+        batch_size=10,
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+        batches=[
+            ImportBatch(
+                run_id="",
+                batch_id="batch_keep",
+                batch_index=0,
+                candidate_path=tmp_path / "artifact2.jsonl",
+                source_type="codex-cli",
+                session_id="session-2",
+                turn_offset=0,
+                turn_count=1,
+                status="uploaded",
+                request_payload={"import_job_id": "run_keep", "turns": []},
+            )
+        ],
+    )
+    ledger.update_run_status(run.run_id, status="completed")
+    ledger.update_run_status(protected_run.run_id, status="completed")
+    cutoff_at = datetime.now(tz=UTC) - timedelta(days=30)
+    old_iso = (cutoff_at - timedelta(days=1)).isoformat()
+    recent_iso = (cutoff_at + timedelta(days=1)).isoformat()
+    with sqlite3.connect(ledger.path) as conn:
+        conn.execute("UPDATE import_runs SET completed_at = ? WHERE run_id = ?", (old_iso, run.run_id))
+        conn.execute(
+            "UPDATE import_runs SET created_at = ?, completed_at = ? WHERE run_id = ?",
+            (old_iso, recent_iso, protected_run.run_id),
+        )
+        conn.execute("UPDATE import_jobs SET created_at = ? WHERE job_id = ?", (old_iso, orphan_job.job_id))
+        conn.execute("UPDATE import_jobs SET created_at = ? WHERE job_id = ?", (old_iso, pruned_job.job_id))
+        conn.execute(
+            "UPDATE import_jobs SET created_at = ? WHERE job_id = ?",
+            (old_iso, protected_job.job_id),
+        )
+        conn.commit()
+
+    result = runner.invoke(
+        app,
+        ["import", "cleanup", "--apply", "--include-scan-jobs", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "apply"
+    assert payload["summary"]["completed_runs_pruned"] == 1
+    assert payload["summary"]["orphaned_jobs_pruned"] == 2
+    assert ledger.get_run(run.run_id) is None
+    assert ledger.get_job(orphan_job.job_id) is None
+    assert ledger.get_job(pruned_job.job_id) is None
+    assert ledger.get_job(protected_job.job_id) is not None
+
+
+def test_import_cleanup_rejects_vacuum_without_apply(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(app, ["import", "cleanup", "--vacuum"])
+
+    assert result.exit_code != 0
+    assert "--vacuum requires --apply" in result.stderr
 
 
 def test_import_upload_json_success(monkeypatch, tmp_path: Path) -> None:

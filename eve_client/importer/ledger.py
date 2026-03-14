@@ -15,11 +15,14 @@ from pathlib import Path
 from eve_client.importer.models import (
     ImportBatch,
     ImportCandidate,
+    ImportCleanupSummary,
     ImportJob,
     ImportRun,
     ImportSourceType,
 )
 from eve_client.state_dir import ensure_private_state_dir
+
+_SQLITE_DELETE_CHUNK_SIZE = 500
 
 
 def _utcnow() -> datetime:
@@ -79,6 +82,7 @@ class ImportLedger:
                     min_importance INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    completed_at TEXT,
                     last_error TEXT,
                     FOREIGN KEY (scan_job_id) REFERENCES import_jobs(job_id) ON DELETE CASCADE
                 );
@@ -113,6 +117,18 @@ class ImportLedger:
             }
             if "content_sha256" not in columns:
                 conn.execute("ALTER TABLE import_candidates ADD COLUMN content_sha256 TEXT")
+            run_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(import_runs)").fetchall()
+            }
+            if "completed_at" not in run_columns:
+                conn.execute("ALTER TABLE import_runs ADD COLUMN completed_at TEXT")
+                conn.execute(
+                    """
+                    UPDATE import_runs
+                    SET completed_at = updated_at
+                    WHERE status = 'completed' AND completed_at IS NULL
+                    """
+                )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -278,8 +294,9 @@ class ImportLedger:
                 """
                 INSERT INTO import_runs (
                     run_id, scan_job_id, status, auth_source_tool, auth_mode, batch_size, batch_count,
-                    context_mode, source_priority, min_importance, created_at, updated_at, last_error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    context_mode, source_priority, min_importance, created_at, updated_at,
+                    completed_at, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -294,6 +311,7 @@ class ImportLedger:
                     min_importance,
                     now,
                     now,
+                    None,
                     None,
                 ),
             )
@@ -463,10 +481,14 @@ class ImportLedger:
             conn.execute(
                 """
                 UPDATE import_runs
-                SET status = ?, last_error = ?, updated_at = ?
+                SET status = ?, last_error = ?, updated_at = ?,
+                    completed_at = CASE
+                        WHEN ? = 'completed' THEN COALESCE(completed_at, ?)
+                        ELSE completed_at
+                    END
                 WHERE run_id = ?
                 """,
-                (status, last_error, now, run_id),
+                (status, last_error, now, status, now, run_id),
             )
 
     def recover_submitting_batches(self, run_id: str) -> int:
@@ -547,3 +569,109 @@ class ImportLedger:
                 """,
                 (status, error, now, batch_id),
             )
+
+    def cleanup(
+        self,
+        *,
+        cutoff_at: datetime,
+        prune_orphaned_jobs: bool = False,
+        apply: bool = False,
+        vacuum: bool = False,
+    ) -> ImportCleanupSummary:
+        self.initialize()
+        cutoff_iso = cutoff_at.isoformat()
+        orphaned_jobs_predicate = """
+            SELECT j.job_id, j.candidate_count
+            FROM import_jobs AS j
+            WHERE j.created_at < ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM import_runs AS r
+                WHERE r.scan_job_id = j.job_id
+                  AND NOT (
+                    r.status = 'completed'
+                    AND r.completed_at IS NOT NULL
+                    AND r.completed_at < ?
+                  )
+              )
+        """
+        with self._connect() as conn:
+            run_count_row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM import_runs
+                WHERE status = 'completed' AND completed_at IS NOT NULL AND completed_at < ?
+                """,
+                (cutoff_iso,),
+            ).fetchone()
+            completed_run_count = int(run_count_row[0] if run_count_row is not None else 0)
+            batch_row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM import_run_batches AS b
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM import_runs AS r
+                    WHERE r.run_id = b.run_id
+                      AND r.status = 'completed'
+                      AND r.completed_at IS NOT NULL
+                      AND r.completed_at < ?
+                )
+                """,
+                (cutoff_iso,),
+            ).fetchone()
+            batch_count = int(batch_row[0] if batch_row is not None else 0)
+
+            orphaned_job_rows = []
+            candidate_count = 0
+            if prune_orphaned_jobs:
+                orphaned_job_rows = conn.execute(
+                    orphaned_jobs_predicate,
+                    (cutoff_iso, cutoff_iso),
+                ).fetchall()
+                candidate_count = sum(int(row["candidate_count"]) for row in orphaned_job_rows)
+
+            summary = ImportCleanupSummary(
+                cutoff_at=cutoff_at,
+                completed_runs_pruned=completed_run_count,
+                batches_pruned=batch_count,
+                orphaned_jobs_pruned=len(orphaned_job_rows),
+                candidates_pruned=candidate_count,
+                vacuumed=False,
+            )
+
+            if not apply:
+                return summary
+
+            conn.execute(
+                """
+                DELETE FROM import_runs
+                WHERE status = 'completed' AND completed_at IS NOT NULL AND completed_at < ?
+                """,
+                (cutoff_iso,),
+            )
+            if orphaned_job_rows:
+                orphaned_ids = [row["job_id"] for row in orphaned_job_rows]
+                for index in range(0, len(orphaned_ids), _SQLITE_DELETE_CHUNK_SIZE):
+                    chunk = orphaned_ids[index : index + _SQLITE_DELETE_CHUNK_SIZE]
+                    conn.execute(
+                        f"""
+                        DELETE FROM import_jobs
+                        WHERE job_id IN ({",".join("?" for _ in chunk)})
+                        """,
+                        tuple(chunk),
+                    )
+
+        if apply and vacuum:
+            self.vacuum()
+            summary.vacuumed = True
+        return summary
+
+    def vacuum(self) -> None:
+        self._ensure_secure_storage()
+        conn = sqlite3.connect(self.path)
+        try:
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+        finally:
+            conn.close()

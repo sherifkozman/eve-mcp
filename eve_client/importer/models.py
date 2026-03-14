@@ -150,3 +150,23 @@ class ImportBatch:
             "result_summary": self.result_summary,
             "last_error": self.last_error,
         }
+
+
+@dataclass(slots=True)
+class ImportCleanupSummary:
+    cutoff_at: datetime
+    completed_runs_pruned: int
+    batches_pruned: int
+    orphaned_jobs_pruned: int
+    candidates_pruned: int
+    vacuumed: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "cutoff_at": self.cutoff_at.isoformat(),
+            "completed_runs_pruned": self.completed_runs_pruned,
+            "batches_pruned": self.batches_pruned,
+            "orphaned_jobs_pruned": self.orphaned_jobs_pruned,
+            "candidates_pruned": self.candidates_pruned,
+            "vacuumed": self.vacuumed,
+        }
