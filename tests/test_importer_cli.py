@@ -228,7 +228,7 @@ def test_import_runs_lists_created_runs(monkeypatch, tmp_path: Path) -> None:
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-runs",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -446,7 +446,7 @@ def test_import_upload_json_success(monkeypatch, tmp_path: Path) -> None:
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-1",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,

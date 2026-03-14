@@ -515,9 +515,40 @@ class ImportLedger:
                 """
                 UPDATE import_run_batches
                 SET status = 'submitting', last_error = NULL, updated_at = ?
-                WHERE batch_id = ? AND status IN ('pending', 'failed')
+                WHERE batch_id = ? AND status IN ('pending', 'failed', 'remote-processing')
                 """,
                 (now, batch_id),
+            )
+            return int(cursor.rowcount or 0) == 1
+
+    def mark_batch_remote_processing(
+        self,
+        *,
+        batch_id: str,
+        remote_idempotency_key: str | None,
+        result_summary: dict[str, object],
+        detail: str,
+    ) -> bool:
+        self.initialize()
+        now = _utcnow().isoformat()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE import_run_batches
+                SET status = 'remote-processing',
+                    remote_idempotency_key = ?,
+                    result_summary_json = ?,
+                    last_error = ?,
+                    updated_at = ?
+                WHERE batch_id = ? AND status = 'submitting'
+                """,
+                (
+                    remote_idempotency_key,
+                    json.dumps(result_summary, sort_keys=True),
+                    detail,
+                    now,
+                    batch_id,
+                ),
             )
             return int(cursor.rowcount or 0) == 1
 

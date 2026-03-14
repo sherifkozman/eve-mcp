@@ -30,6 +30,7 @@ from eve_client.models import ToolName
 _IMPORT_BATCH_PATH = "/memory/import/batch"
 _SUPPORTED_AUTH_TOOLS: tuple[ToolName, ...] = ("claude-code", "gemini-cli", "codex-cli")
 _MAX_BATCH_REQUEST_BYTES = 64 * 1024
+_MAX_REMOTE_RESULT_SUMMARY_BYTES = 8 * 1024
 _MAX_UPLOAD_TIMEOUT_SECONDS = 180.0
 _TRANSPORT_RETRY_ATTEMPTS = 1
 _SOURCE_BATCH_TURN_CAPS: dict[str, int] = {
@@ -303,6 +304,47 @@ def _effective_timeout(*, payload: dict[str, object], base_timeout: float) -> fl
     return min(dynamic_timeout, _MAX_UPLOAD_TIMEOUT_SECONDS)
 
 
+def _normalize_remote_idempotency_key(
+    raw_value: object, *, expected_request_key: str
+) -> str:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        raise ImportUploadError("Managed importer returned an invalid idempotency key.")
+    normalized = raw_value.strip()
+    if normalized != expected_request_key:
+        raise ImportUploadError("Managed importer returned a mismatched idempotency key.")
+    return normalized
+
+
+def _normalize_remote_result_summary(raw_value: object) -> dict[str, object]:
+    if not isinstance(raw_value, dict):
+        return {}
+    encoded = json.dumps(raw_value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    if len(encoded) <= _MAX_REMOTE_RESULT_SUMMARY_BYTES:
+        return raw_value
+    return {
+        "truncated": True,
+        "detail": (
+            "Managed importer result summary exceeded the local safety limit and was omitted."
+        ),
+    }
+
+
+def _coerce_remote_count(raw_value: object, *, field_name: str) -> int:
+    if isinstance(raw_value, bool):
+        raise ImportUploadError(f"Managed importer returned an invalid {field_name}.")
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, str) and raw_value.isdigit():
+        return int(raw_value)
+    raise ImportUploadError(f"Managed importer returned an invalid {field_name}.")
+
+
+def _coerce_remote_duplicate(raw_value: object) -> bool:
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise ImportUploadError("Managed importer returned an invalid duplicate flag.")
+
+
 def _batch_payload(
     *,
     batch_id: str,
@@ -566,6 +608,15 @@ def upload_run(
                 if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
                     continue
                 payload = _materialize_request_payload(batch)
+                expected_request_key = str(payload["idempotency_key"])
+                if (
+                    batch.status == "remote-processing"
+                    and batch.remote_idempotency_key
+                    and batch.remote_idempotency_key != expected_request_key
+                ):
+                    raise ImportUploadError(
+                        "Importer remote-processing batch idempotency drifted before resume."
+                    )
                 effective_timeout = _effective_timeout(payload=payload, base_timeout=timeout)
                 attempt = 0
                 while True:
@@ -590,23 +641,50 @@ def upload_run(
                     continue
                 if status_code == 200 and response is not None:
                     remote_status = str(response.get("status", "")).strip().lower()
-                    result_summary = response.get("result_summary", {}) or {}
+                    result_summary = _normalize_remote_result_summary(response.get("result_summary", {}))
                     if remote_status == "completed":
+                        remote_idempotency_key = _normalize_remote_idempotency_key(
+                            response.get("idempotency_key"),
+                            expected_request_key=expected_request_key,
+                        )
                         ledger.complete_batch(
                             batch_id=batch.batch_id,
                             status="uploaded",
-                            remote_idempotency_key=response.get("idempotency_key"),
-                            extracted_count=int(response.get("extracted_count", 0)),
-                            stored_count=int(response.get("stored_count", 0)),
-                            error_count=int(response.get("error_count", 0)),
-                            duplicate=bool(response.get("duplicate", False)),
+                            remote_idempotency_key=remote_idempotency_key,
+                            extracted_count=_coerce_remote_count(
+                                response.get("extracted_count", 0),
+                                field_name="extracted_count",
+                            ),
+                            stored_count=_coerce_remote_count(
+                                response.get("stored_count", 0),
+                                field_name="stored_count",
+                            ),
+                            error_count=_coerce_remote_count(
+                                response.get("error_count", 0),
+                                field_name="error_count",
+                            ),
+                            duplicate=_coerce_remote_duplicate(response.get("duplicate", False)),
                             result_summary=result_summary,
                         )
                     elif remote_status == "processing":
+                        remote_idempotency_key = _normalize_remote_idempotency_key(
+                            response.get("idempotency_key"),
+                            expected_request_key=expected_request_key,
+                        )
                         detail = (
                             "Managed importer batch is still processing remotely; retry upload later."
                         )
-                        ledger.fail_batch(batch_id=batch.batch_id, status="failed", error=detail)
+                        if not ledger.mark_batch_remote_processing(
+                            batch_id=batch.batch_id,
+                            remote_idempotency_key=remote_idempotency_key,
+                            result_summary=result_summary,
+                            detail=detail,
+                        ):
+                            raise ImportUploadError(
+                                "Importer run batch changed state unexpectedly during remote-processing handoff."
+                            )
+                        current_batch_id = None
+                        break
                     elif remote_status == "failed":
                         detail = "Managed importer batch failed remotely."
                         if isinstance(result_summary, dict):
@@ -643,8 +721,20 @@ def upload_run(
             raise
         run_batches = ledger.get_run_batches(run.run_id)
         failed = [batch for batch in run_batches if batch.status in {"failed", "conflict"}]
-        run_status = "failed" if failed else "completed"
-        run_error = failed[0].last_error if failed else None
+        in_progress = [
+            batch
+            for batch in run_batches
+            if batch.status in {"pending", "submitting", "remote-processing"}
+        ]
+        if failed:
+            run_status = "failed"
+            run_error = failed[0].last_error
+        elif in_progress:
+            run_status = "running"
+            run_error = None
+        else:
+            run_status = "completed"
+            run_error = None
         ledger.update_run_status(run.run_id, status=run_status, last_error=run_error)
         refreshed_run = ledger.get_run(run.run_id)
     if refreshed_run is None:
