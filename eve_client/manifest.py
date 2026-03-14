@@ -11,12 +11,14 @@ from eve_client.integrity import (
     IntegrityKeyError,
     compute_payload_digest,
     get_or_create_integrity_key,
+    load_existing_integrity_key,
     sign_payload,
     verify_signature,
 )
 from eve_client.state_binding import (
     StateBindingError,
     get_or_create_installation_id,
+    load_existing_installation_id,
     store_sequence_watermark,
     verify_sequence_watermark,
 )
@@ -52,16 +54,11 @@ def _empty_envelope() -> dict[str, object]:
 
 
 def load_manifest_envelope(
-    state_dir: Path, *, allow_file_fallback: bool = False
+    state_dir: Path, *, allow_file_fallback: bool = False, sync_back: bool = True
 ) -> dict[str, object]:
-    ensure_private_state_dir(state_dir)
+    if sync_back:
+        ensure_private_state_dir(state_dir)
     path = manifest_path(state_dir)
-    try:
-        installation_id = get_or_create_installation_id(
-            state_dir, allow_file_fallback=allow_file_fallback
-        )
-    except StateBindingError as exc:
-        raise ManifestIntegrityError(str(exc)) from exc
     if not path.exists():
         try:
             verify_sequence_watermark(
@@ -69,10 +66,21 @@ def load_manifest_envelope(
                 manifest_exists=False,
                 sequence=0,
                 allow_file_fallback=allow_file_fallback,
+                sync_back=sync_back,
             )
         except StateBindingError as exc:
             raise ManifestIntegrityError(str(exc)) from exc
         return _empty_envelope()
+    try:
+        installation_id = load_existing_installation_id(
+            state_dir,
+            allow_file_fallback=allow_file_fallback,
+            sync_back=sync_back,
+        )
+    except StateBindingError as exc:
+        raise ManifestIntegrityError(str(exc)) from exc
+    if not installation_id:
+        raise ManifestIntegrityError("Manifest installation identity is missing")
     envelope = json.loads(SafeFS.from_roots([state_dir]).read_text(path, encoding="utf-8"))
     if not isinstance(envelope, dict):
         raise ManifestIntegrityError("Manifest envelope is not an object")
@@ -92,20 +100,33 @@ def load_manifest_envelope(
             manifest_exists=True,
             sequence=int(payload.get("sequence", 0)),
             allow_file_fallback=allow_file_fallback,
+            sync_back=sync_back,
         )
     except (ValueError, StateBindingError) as exc:
         raise ManifestIntegrityError(str(exc)) from exc
     try:
-        secret = get_or_create_integrity_key(state_dir, allow_file_fallback=allow_file_fallback)
+        secret = load_existing_integrity_key(
+            state_dir,
+            allow_file_fallback=allow_file_fallback,
+            sync_back=sync_back,
+        )
     except IntegrityKeyError as exc:
         raise ManifestIntegrityError(str(exc)) from exc
+    if not secret:
+        raise ManifestIntegrityError("Manifest integrity key is missing")
     if not verify_signature(payload, secret, signature):
         raise ManifestIntegrityError("Manifest signature verification failed")
     return envelope
 
 
-def load_manifest(state_dir: Path, *, allow_file_fallback: bool = False) -> list[ManifestRecord]:
-    envelope = load_manifest_envelope(state_dir, allow_file_fallback=allow_file_fallback)
+def load_manifest(
+    state_dir: Path, *, allow_file_fallback: bool = False, sync_back: bool = True
+) -> list[ManifestRecord]:
+    envelope = load_manifest_envelope(
+        state_dir,
+        allow_file_fallback=allow_file_fallback,
+        sync_back=sync_back,
+    )
     payload = envelope["payload"]
     return [ManifestRecord(**item) for item in payload.get("records", [])]
 

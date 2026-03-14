@@ -7,10 +7,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from eve_client.integrity import HMAC_ALGORITHM
+from eve_client.integrity import HMAC_ALGORITHM, load_existing_integrity_key
 from eve_client.manifest import ManifestIntegrityError, load_manifest, manifest_path, write_manifest
 from eve_client.models import ManifestRecord
-from eve_client.state_binding import get_or_create_installation_id, store_sequence_watermark
+from eve_client.state_binding import (
+    get_or_create_installation_id,
+    load_existing_installation_id,
+    load_existing_sequence_watermark,
+    store_sequence_watermark,
+)
 from keyring.errors import KeyringError
 
 
@@ -59,8 +64,8 @@ def test_manifest_write_creates_signed_envelope(tmp_path: Path) -> None:
         assert payload["payload"]["sequence"] == 1
         assert payload["signature"]
         records = load_manifest(tmp_path)
-    assert len(records) == 1
-    assert records[0].transaction_id == "txn-1"
+        assert len(records) == 1
+        assert records[0].transaction_id == "txn-1"
 
 
 def test_manifest_tamper_is_detected(tmp_path: Path) -> None:
@@ -90,8 +95,8 @@ def test_manifest_sequence_increments(tmp_path: Path) -> None:
         write_manifest(tmp_path, [_record()])
         write_manifest(tmp_path, [_record(), _record()])
         payload = json.loads(manifest_path(tmp_path).read_text(encoding="utf-8"))
-    assert payload["payload"]["sequence"] == 2
-    assert payload["payload"]["prev_digest"]
+        assert payload["payload"]["sequence"] == 2
+        assert payload["payload"]["prev_digest"]
 
 
 def test_manifest_uses_keyring_for_integrity_key(tmp_path: Path) -> None:
@@ -100,6 +105,81 @@ def test_manifest_uses_keyring_for_integrity_key(tmp_path: Path) -> None:
         records = load_manifest(tmp_path)
     assert len(records) == 1
     assert not (tmp_path / "integrity.key").exists()
+
+
+def test_fallback_loaders_prefer_keyring_and_resync_stale_files(tmp_path: Path) -> None:
+    with (
+        patched_keyring(),
+        patch(
+            "eve_client.integrity.KeyringCredentialStore.backend_is_low_assurance",
+            return_value=False,
+        ),
+    ):
+        write_manifest(tmp_path, [_record()], allow_file_fallback=True)
+        installation_id = get_or_create_installation_id(tmp_path, allow_file_fallback=True)
+        integrity_key = load_existing_integrity_key(tmp_path, allow_file_fallback=True)
+        assert integrity_key is not None
+        store_sequence_watermark(tmp_path, 7, allow_file_fallback=True)
+
+        state_binding_path = tmp_path / "state-binding.json"
+        payload = json.loads(state_binding_path.read_text(encoding="utf-8"))
+        for key in list(payload):
+            if key.startswith("installation-id:"):
+                payload[key] = "stale-installation-id"
+            elif key.startswith("manifest-sequence:"):
+                payload[key] = "1"
+        state_binding_path.write_text(json.dumps(payload), encoding="utf-8")
+        (tmp_path / "integrity.key").write_text("stale-integrity-key\n", encoding="utf-8")
+
+        assert load_existing_installation_id(tmp_path, allow_file_fallback=True) == installation_id
+        assert load_existing_sequence_watermark(tmp_path, allow_file_fallback=True) == 7
+        assert load_existing_integrity_key(tmp_path, allow_file_fallback=True) == integrity_key
+
+        repaired = json.loads(state_binding_path.read_text(encoding="utf-8"))
+        assert installation_id in repaired.values()
+        assert "7" in repaired.values()
+        assert (tmp_path / "integrity.key").read_text(encoding="utf-8").strip() == "stale-integrity-key"
+        assert integrity_key != "stale-integrity-key"
+
+
+def test_load_manifest_with_read_only_fallback_probe_does_not_create_sidecar_files(
+    tmp_path: Path,
+) -> None:
+    with patched_keyring():
+        write_manifest(tmp_path, [_record()], allow_file_fallback=False)
+        assert not (tmp_path / "state-binding.json").exists()
+        assert not (tmp_path / "integrity.key").exists()
+
+        records = load_manifest(tmp_path, allow_file_fallback=True, sync_back=False)
+
+        assert len(records) == 1
+        assert not (tmp_path / "state-binding.json").exists()
+        assert not (tmp_path / "integrity.key").exists()
+
+
+def test_load_manifest_read_only_probe_does_not_create_state_dir(tmp_path: Path) -> None:
+    state_dir = tmp_path / "probe-only"
+    assert not state_dir.exists()
+    records = load_manifest(state_dir, allow_file_fallback=True, sync_back=False)
+    assert records == []
+    assert not state_dir.exists()
+
+
+def test_load_manifest_read_only_probe_reports_malformed_state_binding(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "state-binding.json").write_text("{not-json", encoding="utf-8")
+    with pytest.raises(ManifestIntegrityError, match="State binding file is malformed"):
+        load_manifest(tmp_path, allow_file_fallback=True, sync_back=False)
+
+
+def test_load_manifest_read_only_probe_reports_unreadable_state_binding(tmp_path: Path) -> None:
+    (tmp_path / "state-binding.json").write_text("{}", encoding="utf-8")
+    with patch(
+        "eve_client.state_binding.SafeFS.read_text",
+        side_effect=PermissionError("permission denied"),
+    ):
+        with pytest.raises(ManifestIntegrityError, match="Unable to read state binding file"):
+            load_manifest(tmp_path, allow_file_fallback=True, sync_back=False)
 
 
 def test_installation_identity_is_stable(tmp_path: Path) -> None:

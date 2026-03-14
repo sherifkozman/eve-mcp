@@ -250,15 +250,54 @@ def test_linux_uses_separate_config_and_state_dirs(monkeypatch, tmp_path: Path) 
     assert config.state_dir == tmp_path / "state" / "eve"
 
 
-def test_darwin_honors_xdg_overrides_for_config_and_state(monkeypatch, tmp_path: Path) -> None:
+def test_darwin_honors_xdg_overrides_when_set(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Darwin")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr("eve_client.config.Path.home", lambda: tmp_path)
     config = resolve_config()
+    assert config.config_dir == tmp_path / "cfg" / "eve"
     assert config.config_path == tmp_path / "cfg" / "eve" / "config.json"
     assert config.state_dir == tmp_path / "state" / "eve"
 
+def test_darwin_prefers_existing_native_dirs_over_empty_xdg_override(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Darwin")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    native = tmp_path / "Library" / "Application Support" / "eve"
+    native.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("eve_client.config.Path.home", lambda: tmp_path)
+    config = resolve_config()
+    assert config.config_dir == native
+    assert config.config_path == native / "config.json"
+    assert config.state_dir == native
 
+
+def test_darwin_uses_xdg_for_both_roots_when_any_xdg_root_exists(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Darwin")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    native = tmp_path / "Library" / "Application Support" / "eve"
+    native.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "state" / "eve").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("eve_client.config.Path.home", lambda: tmp_path)
+    config = resolve_config()
+    assert config.config_dir == tmp_path / "cfg" / "eve"
+    assert config.state_dir == tmp_path / "state" / "eve"
+
+
+def test_windows_keeps_native_dirs_even_when_xdg_is_set(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Windows")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    config = resolve_config()
+    assert config.config_dir == tmp_path / "appdata" / "eve"
+    assert config.config_path == tmp_path / "appdata" / "eve" / "config.json"
+    assert config.state_dir == tmp_path / "localappdata" / "eve" / "state"
 def test_update_local_config_writes_to_config_dir(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))

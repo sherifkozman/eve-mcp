@@ -1524,6 +1524,7 @@ def doctor(
     _, detected = _resolve_detected_tools(config, raw_tools=tool)
     credential_store = _credential_store(config)
     problems: list[str] = []
+    notices: list[str] = []
     keyring_health = _keyring_health(config)
     pending_transaction = load_transaction_state(config.state_dir)
     try:
@@ -1531,12 +1532,48 @@ def doctor(
     except InstallerLockUnsupportedPlatformError as exc:
         lock_held = False
         problems.append(f"locking: {exc}")
+    strict_trust_error: str | None = None
     try:
         load_manifest(config.state_dir, allow_file_fallback=config.allow_file_secret_fallback)
     except ManifestIntegrityError as exc:
-        problems.append(
-            f"trust-state: {exc}. Run 'eve trust reinit --yes' after reviewing local state."
-        )
+        strict_trust_error = str(exc)
+    if config.allow_file_secret_fallback:
+        if strict_trust_error:
+            problems.append(
+                "trust-state: "
+                f"{strict_trust_error}. Run 'eve trust reinit --yes' after reviewing local state."
+            )
+    else:
+        fallback_trust_error: str | None = None
+        try:
+            load_manifest(config.state_dir, allow_file_fallback=True, sync_back=False)
+        except ManifestIntegrityError as exc:
+            fallback_trust_error = str(exc)
+
+        trust_problem: str | None = None
+        if strict_trust_error and fallback_trust_error:
+            if fallback_trust_error == strict_trust_error:
+                trust_problem = strict_trust_error
+            else:
+                trust_problem = (
+                    f"{strict_trust_error} (fallback recovery check: {fallback_trust_error})"
+                )
+        elif strict_trust_error:
+            trust_problem = (
+                f"{strict_trust_error} (trust-state can be loaded when file fallback is permitted, "
+                "but strict secret storage policy is active)"
+            )
+        elif fallback_trust_error:
+            notices.append(
+                "trust-state: "
+                f"{fallback_trust_error} (inactive fallback artifacts are inconsistent while "
+                "strict secret storage policy is active)"
+            )
+        if trust_problem:
+            problems.append(
+                "trust-state: "
+                f"{trust_problem}. Run 'eve trust reinit --yes' after reviewing local state."
+            )
     if pending_transaction and not lock_held:
         problems.append(
             "transaction-state: interrupted installer run detected with no active lock; "
@@ -1595,9 +1632,13 @@ def doctor(
             console.print(f"- {codex_warning}")
         for problem in problems:
             console.print(f"- {problem}")
+        for notice in notices:
+            console.print(f"- {notice}")
         raise typer.Exit(1)
     if codex_warning:
         console.print(f"[yellow]{codex_warning}[/yellow]")
+    for notice in notices:
+        console.print(f"[yellow]{notice}[/yellow]")
     console.print("[green]No core engine issues detected.[/green]")
 
 
