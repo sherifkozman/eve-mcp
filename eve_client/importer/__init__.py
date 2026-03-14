@@ -10,6 +10,7 @@ from eve_client.importer.ledger import ImportLedger
 from eve_client.importer.models import (
     ImportBatch,
     ImportCandidate,
+    ImportCleanupSummary,
     ImportJob,
     ImportRun,
     ImportSourceType,
@@ -21,6 +22,7 @@ __all__ = [
     "ImportBatch",
     "ImportAdapter",
     "ImportCandidate",
+    "ImportCleanupSummary",
     "ImportJob",
     "ImportLedger",
     "ImportRun",

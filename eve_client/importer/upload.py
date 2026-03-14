@@ -32,6 +32,16 @@ _SUPPORTED_AUTH_TOOLS: tuple[ToolName, ...] = ("claude-code", "gemini-cli", "cod
 _MAX_BATCH_REQUEST_BYTES = 64 * 1024
 _MAX_UPLOAD_TIMEOUT_SECONDS = 180.0
 _TRANSPORT_RETRY_ATTEMPTS = 1
+_SOURCE_BATCH_TURN_CAPS: dict[str, int] = {
+    "claude-code": 8,
+    "codex-cli": 25,
+    "gemini-cli": 25,
+}
+_SOURCE_TARGET_REQUEST_BYTES: dict[str, int] = {
+    "claude-code": 24 * 1024,
+    "codex-cli": 48 * 1024,
+    "gemini-cli": 48 * 1024,
+}
 
 
 class ImportUploadError(RuntimeError):
@@ -196,12 +206,42 @@ def _slice_turn_groups(
     min_importance: int,
 ) -> list[tuple[int, list[ImportTurn]]]:
     turn_groups: list[tuple[int, list[ImportTurn]]] = []
-    for turn_offset in range(0, len(turns), batch_size):
-        chunk = turns[turn_offset : turn_offset + batch_size]
-        pending: list[tuple[int, list[ImportTurn]]] = [(turn_offset, chunk)]
-        while pending:
-            current_offset, current_chunk = pending.pop(0)
-            estimated_bytes = _estimate_request_bytes(
+    source_turn_cap = _SOURCE_BATCH_TURN_CAPS.get(candidate.source_type, batch_size)
+    max_turns_per_batch = min(batch_size, source_turn_cap)
+    target_request_bytes = min(
+        _MAX_BATCH_REQUEST_BYTES,
+        _SOURCE_TARGET_REQUEST_BYTES.get(candidate.source_type, _MAX_BATCH_REQUEST_BYTES),
+    )
+    current_offset = 0
+    current_chunk: list[ImportTurn] = []
+    current_chunk_offset = 0
+    for index, turn in enumerate(turns):
+        next_chunk = [*current_chunk, turn]
+        estimated_bytes = _estimate_request_bytes(
+            run_id=run_id,
+            source_type=candidate.source_type,
+            session_id=candidate.session_id,
+            context_mode=context_mode,
+            source_priority=source_priority,
+            min_importance=min_importance,
+            candidate=candidate,
+            turns=next_chunk,
+        )
+        if not current_chunk:
+            if estimated_bytes > _MAX_BATCH_REQUEST_BYTES:
+                raise ImportUploadError(
+                    "Importer source contains a single turn that exceeds the maximum upload batch size."
+                )
+            current_chunk = next_chunk
+            current_chunk_offset = current_offset
+            current_offset = index + 1
+            continue
+        if len(next_chunk) > max_turns_per_batch or estimated_bytes > target_request_bytes:
+            turn_groups.append((current_chunk_offset, current_chunk))
+            current_chunk = [turn]
+            current_chunk_offset = index
+            current_offset = index + 1
+            single_bytes = _estimate_request_bytes(
                 run_id=run_id,
                 source_type=candidate.source_type,
                 session_id=candidate.session_id,
@@ -211,19 +251,15 @@ def _slice_turn_groups(
                 candidate=candidate,
                 turns=current_chunk,
             )
-            if len(current_chunk) <= 1:
-                if estimated_bytes > _MAX_BATCH_REQUEST_BYTES:
-                    raise ImportUploadError(
-                        "Importer source contains a single turn that exceeds the maximum upload batch size."
-                    )
-                turn_groups.append((current_offset, current_chunk))
-                continue
-            if estimated_bytes <= _MAX_BATCH_REQUEST_BYTES:
-                turn_groups.append((current_offset, current_chunk))
-                continue
-            split_index = max(1, len(current_chunk) // 2)
-            pending.insert(0, (current_offset + split_index, current_chunk[split_index:]))
-            pending.insert(0, (current_offset, current_chunk[:split_index]))
+            if single_bytes > _MAX_BATCH_REQUEST_BYTES:
+                raise ImportUploadError(
+                    "Importer source contains a single turn that exceeds the maximum upload batch size."
+                )
+            continue
+        current_chunk = next_chunk
+        current_offset = index + 1
+    if current_chunk:
+        turn_groups.append((current_chunk_offset, current_chunk))
     return turn_groups
 
 
