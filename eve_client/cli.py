@@ -59,7 +59,10 @@ from eve_client.uninstall import UninstallError, uninstall_tools
 from eve_client.verify import verify_tools
 
 app = typer.Typer(name="eve", help="Eve client installer and tool integration manager.")
-import_app = typer.Typer(name="import", help="Local importer workflow for Codex and Gemini data.")
+import_app = typer.Typer(
+    name="import",
+    help="Local importer workflow for Claude Code, Codex, and Gemini data.",
+)
 app.add_typer(import_app, name="import")
 console = Console()
 CODEX_BEARER_TOKEN_ENV_VAR = "EVE_CODEX_BEARER_TOKEN"

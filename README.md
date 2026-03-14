@@ -2,7 +2,7 @@
 
 `eve-client` is the local installer and integration CLI for connecting supported AI tools to the hosted Eve memory service.
 
-It detects local tools, configures MCP, installs Eve-managed prompt and hook files where supported, manages auth, and can verify, repair, or remove the integration later.
+It detects local tools, configures MCP, installs Eve-managed prompt and hook files where supported, manages auth, and can verify, repair, or remove the integration later. It can also import local history from supported clients.
 
 ## Install
 
@@ -63,6 +63,44 @@ pipx install eve-client
 - installs hooks where supported
 - stores auth locally using keyring-first storage
 - verifies, repairs, rolls back, and uninstalls Eve-managed changes
+- imports local conversation history into Eve from supported clients
+
+## Importing Local History
+
+Supported importer sources today:
+- Claude Code
+- Codex CLI
+- Gemini CLI
+
+Core commands:
+
+```bash
+eve import scan --source claude-code
+eve import preview --source claude-code --path <session_file>
+eve auth login --tool claude-code
+eve import upload --job <scan_job_id> --use-auth-from claude-code
+eve import resume --run <run_id>
+eve import cleanup --days 30
+eve import cleanup --days 30 --apply
+```
+
+How it works:
+- parses local history on your machine
+- uploads normalized batches to the managed Eve service
+- keeps a local SQLite ledger for scan jobs, upload runs, replay, and resume
+- supports dry-run cleanup of old completed local importer runs by default
+
+Importer maintenance:
+- `eve import cleanup` is a generic local ledger maintenance command, not a client-specific import source feature
+
+Auth note:
+- avoid passing secrets directly on the command line when possible
+- prefer `eve auth login ...` first, then run importer commands without repeating the API key
+- in an interactive shell, `eve auth login --tool claude-code` prompts for the key securely
+
+Current rollout note:
+- correctness and resume are solid
+- very large imports, especially Claude-heavy ones, may still be slower than ideal while batching defaults continue to be tuned
 
 ## Supported Clients
 
@@ -72,6 +110,7 @@ Supported today:
 - MCP config
 - `CLAUDE.md` companion file
 - package-managed hooks
+- importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
 - Eve API key
@@ -82,6 +121,7 @@ Supported today:
 - MCP config
 - `GEMINI.md` companion file
 - package-managed hooks
+- importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
 - Eve API key
@@ -92,6 +132,7 @@ Supported today:
 - MCP config
 - Eve-owned OAuth login
 - runtime bearer token injection
+- importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
 - Eve OAuth
