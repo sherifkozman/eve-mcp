@@ -703,6 +703,40 @@ def test_doctor_reports_trust_state_recovery(tmp_path: Path, monkeypatch) -> Non
         store_sequence_watermark(state_dir, 2, allow_file_fallback=True)
         result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
+    assert "inactive fallback artifacts are inconsistent" in result.output
+
+
+def test_doctor_does_not_bypass_strict_policy_for_file_backed_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    state_dir = tmp_path / "eve"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    write_manifest(
+        state_dir,
+        [
+            ManifestRecord(
+                transaction_id="txn",
+                tool="claude-code",
+                action_id="a1",
+                action_type="write_config",
+                path=str(tmp_path / ".claude" / "settings.json"),
+                backup_path=None,
+                sha256="abc123",
+                backup_sha256=None,
+                scope="global-config",
+                environment="production",
+            )
+        ],
+        allow_file_fallback=True,
+    )
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "trust-state:" in result.output
+    assert "trust-state can be" in result.output
+    assert "strict secret storage policy is" in result.output
     assert "eve trust reinit --yes" in result.output
 
 

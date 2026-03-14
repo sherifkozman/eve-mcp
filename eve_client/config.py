@@ -95,31 +95,55 @@ class ResolvedConfig:
     oauth_client_id: str = DEFAULT_OAUTH_CLIENT_ID
 
 
+def _darwin_native_dir() -> Path:
+    return Path.home() / "Library" / "Application Support" / "eve"
+
+
+def _darwin_use_native_dirs() -> bool:
+    native = _darwin_native_dir()
+    config_xdg = os.environ.get("XDG_CONFIG_HOME")
+    state_xdg = os.environ.get("XDG_STATE_HOME")
+    config_candidate = Path(config_xdg) / "eve" if config_xdg else None
+    state_candidate = Path(state_xdg) / "eve" if state_xdg else None
+    if not (config_xdg or state_xdg):
+        return True
+    return native.exists() and not any(
+        candidate is not None and candidate.exists()
+        for candidate in (config_candidate, state_candidate)
+    )
+
+
 def get_config_dir() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg:
-        return Path(xdg) / "eve"
     system = platform.system()
     if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "eve"
+        native = _darwin_native_dir()
+        if xdg and not _darwin_use_native_dirs():
+            return Path(xdg) / "eve"
+        return native
     if system == "Windows":
         appdata = os.environ.get("APPDATA")
         if appdata:
             return Path(appdata) / "eve"
+    if xdg:
+        return Path(xdg) / "eve"
     return Path.home() / ".config" / "eve"
 
 
 def get_state_dir() -> Path:
     xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg:
-        return Path(xdg) / "eve"
     system = platform.system()
     if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "eve"
+        native = _darwin_native_dir()
+        if xdg and not _darwin_use_native_dirs():
+            return Path(xdg) / "eve"
+        return native
     if system == "Windows":
         local_appdata = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         if local_appdata:
             return Path(local_appdata) / "eve" / "state"
+    if xdg:
+        return Path(xdg) / "eve"
     return Path.home() / ".local" / "state" / "eve"
 
 
