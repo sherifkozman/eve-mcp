@@ -264,7 +264,7 @@ def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-1",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -283,7 +283,7 @@ def test_upload_run_marks_batches_uploaded(monkeypatch, tmp_path: Path) -> None:
 
     assert result.run.status == "completed"
     assert result.batches[0].status == "uploaded"
-    assert result.batches[0].remote_idempotency_key == "idem-1"
+    assert result.batches[0].remote_idempotency_key == result.batches[0].batch_id
 
 
 def test_build_batches_for_job_rejects_changed_source_before_parse(tmp_path: Path) -> None:
@@ -354,7 +354,7 @@ def test_upload_run_retries_same_batch_on_timeout(monkeypatch, tmp_path: Path) -
             raise ImportUploadError("Connection failed: timed out")
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-retry",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -376,7 +376,7 @@ def test_upload_run_retries_same_batch_on_timeout(monkeypatch, tmp_path: Path) -
     assert attempts["count"] == 1
     assert len(result.batches) == 1
     assert result.batches[0].status == "uploaded"
-    assert result.batches[0].remote_idempotency_key == "idem-retry"
+    assert result.batches[0].remote_idempotency_key == result.batches[0].batch_id
     assert len(observed_timeouts) == 2
     assert observed_timeouts[0] >= 1.0
     assert observed_timeouts[1] >= observed_timeouts[0]
@@ -416,7 +416,7 @@ def test_upload_run_locks_on_ledger_directory_not_config_state_dir(
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-locked",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -458,7 +458,7 @@ def test_upload_run_retries_failed_batches(monkeypatch, tmp_path: Path) -> None:
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-retry-failed",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -499,7 +499,7 @@ def test_upload_run_does_not_send_local_candidate_path(monkeypatch, tmp_path: Pa
         seen_payloads.append(kwargs["payload"])
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-safe",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -789,7 +789,7 @@ def test_upload_run_recovers_stale_submitting_batches(monkeypatch, tmp_path: Pat
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-recovered",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -879,7 +879,151 @@ def test_upload_run_wraps_missing_adapter_during_materialization(
     assert stored_run.status == "failed"
 
 
-def test_upload_run_fails_when_remote_status_is_processing(monkeypatch, tmp_path: Path) -> None:
+def test_upload_run_keeps_batches_resumable_when_remote_status_is_processing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=1,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "result_summary": {},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "running"
+    assert result.batches[0].status == "remote-processing"
+    assert result.batches[0].last_error == (
+        "Managed importer batch is still processing remotely; retry upload later."
+    )
+    assert result.batches[1].status == "pending"
+
+
+def test_upload_run_normalizes_non_dict_processing_result_summary(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=1,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "result_summary": ["still-running"],
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "running"
+    assert result.batches[0].status == "remote-processing"
+    assert result.batches[0].result_summary == {}
+
+
+def test_upload_run_resumes_remote_processing_batches(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    calls = {"count": 0}
+    request_payloads: list[dict[str, object]] = []
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        calls["count"] += 1
+        request_payloads.append(kwargs["payload"])
+        key = kwargs["payload"]["idempotency_key"]
+        if calls["count"] == 1:
+            return 200, {
+                "status": "processing",
+                "idempotency_key": key,
+                "result_summary": {"detail": "still running"},
+            }
+        return 200, {
+            "status": "completed",
+            "idempotency_key": key,
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    first = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+    assert first.run.status == "running"
+    assert first.batches[0].status == "remote-processing"
+    assert first.batches[0].remote_idempotency_key == first.batches[0].batch_id
+
+    resumed_run = ledger.get_run(run.run_id)
+    assert resumed_run is not None
+    second = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=resumed_run,
+    )
+
+    assert second.run.status == "completed"
+    assert second.batches[0].status == "uploaded"
+    assert second.batches[0].remote_idempotency_key == second.batches[0].batch_id
+    assert calls["count"] == 2
+    assert len(request_payloads) == 2
+    assert request_payloads[0]["idempotency_key"] == request_payloads[1]["idempotency_key"]
+    assert request_payloads[0]["idempotency_key"] == first.batches[0].batch_id
+
+
+def test_upload_run_rejects_mismatched_remote_idempotency_key(monkeypatch, tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None
     run, _ = build_batches_for_job(
@@ -894,7 +1038,77 @@ def test_upload_run_fails_when_remote_status_is_processing(monkeypatch, tmp_path
     )
 
     def _request_batch(**kwargs):  # noqa: ANN003
-        return 200, {"status": "processing", "result_summary": {}}
+        return 200, {
+            "status": "processing",
+            "idempotency_key": "mismatched-remote-key",
+            "result_summary": {},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    with pytest.raises(ImportUploadError, match="mismatched idempotency key"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+
+def test_upload_run_rejects_non_string_remote_idempotency_key(monkeypatch, tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": 123,
+            "result_summary": {},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    with pytest.raises(ImportUploadError, match="invalid idempotency key"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+
+def test_upload_run_truncates_oversized_processing_result_summary(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=1,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "result_summary": {"blob": "x" * 12000},
+        }
 
     monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
 
@@ -905,11 +1119,206 @@ def test_upload_run_fails_when_remote_status_is_processing(monkeypatch, tmp_path
         run=run,
     )
 
-    assert result.run.status == "failed"
-    assert result.batches[0].status == "failed"
-    assert result.batches[0].last_error == (
-        "Managed importer batch is still processing remotely; retry upload later."
+    assert result.run.status == "running"
+    assert result.batches[0].result_summary == {
+        "truncated": True,
+        "detail": "Managed importer result summary exceeded the local safety limit and was omitted.",
+    }
+
+
+def test_upload_run_safely_omits_unserializable_processing_result_summary(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=1,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
     )
+    summary: dict[str, object] = {}
+    summary["self"] = summary
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "result_summary": summary,
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "running"
+    assert result.batches[0].result_summary == {
+        "truncated": True,
+        "detail": "Managed importer result summary could not be serialized safely and was omitted.",
+    }
+
+
+def test_upload_run_rejects_remote_processing_idempotency_drift(tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    batch = ledger.get_run_batches(run.run_id)[0]
+    assert ledger.mark_batch_submitting(batch_id=batch.batch_id) is True
+    assert (
+        ledger.mark_batch_remote_processing(
+            batch_id=batch.batch_id,
+            remote_idempotency_key="mismatched-remote-key",
+            result_summary={},
+            detail="still running",
+        )
+        is True
+    )
+    resumed_run = ledger.get_run(run.run_id)
+    assert resumed_run is not None
+
+    with pytest.raises(ImportUploadError, match="idempotency drifted before resume"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=resumed_run,
+        )
+    refreshed = ledger.get_run_batches(run.run_id)[0]
+    assert refreshed.status == "remote-processing"
+    assert refreshed.remote_idempotency_key == "mismatched-remote-key"
+    assert refreshed.last_error == "still running"
+
+
+def test_upload_run_rejects_invalid_completed_response_fields(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "completed",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "extracted_count": "not-a-number",
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": "false",
+            "result_summary": {"chunk_ids": ["c1"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    with pytest.raises(ImportUploadError, match="invalid extracted_count"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+
+def test_upload_run_rejects_negative_completed_response_counts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "completed",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "extracted_count": -1,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    with pytest.raises(ImportUploadError, match="invalid extracted_count"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+
+def test_mark_batch_remote_processing_does_not_downgrade_terminal_batches(tmp_path: Path) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    batch = ledger.get_run_batches(run.run_id)[0]
+    ledger.complete_batch(
+        batch_id=batch.batch_id,
+        status="uploaded",
+        remote_idempotency_key="idem-terminal",
+        extracted_count=1,
+        stored_count=1,
+        error_count=0,
+        duplicate=False,
+        result_summary={},
+    )
+
+    transitioned = ledger.mark_batch_remote_processing(
+        batch_id=batch.batch_id,
+        remote_idempotency_key="idem-should-not-overwrite",
+        result_summary={"detail": "should not persist"},
+        detail="should not persist",
+    )
+
+    assert transitioned is False
+    refreshed = ledger.get_run_batches(run.run_id)[0]
+    assert refreshed.status == "uploaded"
+    assert refreshed.remote_idempotency_key == "idem-terminal"
 
 
 def test_upload_run_fails_when_remote_status_is_failed(monkeypatch, tmp_path: Path) -> None:
