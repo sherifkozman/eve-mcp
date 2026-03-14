@@ -376,7 +376,7 @@ def test_upload_run_retries_same_batch_on_timeout(monkeypatch, tmp_path: Path) -
     assert attempts["count"] == 1
     assert len(result.batches) == 1
     assert result.batches[0].status == "uploaded"
-    assert result.batches[0].remote_idempotency_key == "idem-retry"
+    assert result.batches[0].remote_idempotency_key == result.batches[0].batch_id
     assert len(observed_timeouts) == 2
     assert observed_timeouts[0] >= 1.0
     assert observed_timeouts[1] >= observed_timeouts[0]
@@ -458,7 +458,7 @@ def test_upload_run_retries_failed_batches(monkeypatch, tmp_path: Path) -> None:
     def _request_batch(**kwargs):  # noqa: ANN003
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-retry-failed",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -499,7 +499,7 @@ def test_upload_run_does_not_send_local_candidate_path(monkeypatch, tmp_path: Pa
         seen_payloads.append(kwargs["payload"])
         return 200, {
             "status": "completed",
-            "idempotency_key": "idem-safe",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
             "extracted_count": 2,
             "stored_count": 2,
             "error_count": 0,
@@ -1126,6 +1126,47 @@ def test_upload_run_truncates_oversized_processing_result_summary(
     }
 
 
+def test_upload_run_safely_omits_unserializable_processing_result_summary(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=1,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+    summary: dict[str, object] = {}
+    summary["self"] = summary
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "processing",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "result_summary": summary,
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "running"
+    assert result.batches[0].result_summary == {
+        "truncated": True,
+        "detail": "Managed importer result summary could not be serialized safely and was omitted.",
+    }
+
+
 def test_upload_run_rejects_remote_processing_idempotency_drift(tmp_path: Path) -> None:
     ledger, job = _seed_job(tmp_path)
     assert job is not None
@@ -1160,6 +1201,10 @@ def test_upload_run_rejects_remote_processing_idempotency_drift(tmp_path: Path) 
             credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
             run=resumed_run,
         )
+    refreshed = ledger.get_run_batches(run.run_id)[0]
+    assert refreshed.status == "remote-processing"
+    assert refreshed.remote_idempotency_key == "mismatched-remote-key"
+    assert refreshed.last_error == "still running"
 
 
 def test_upload_run_rejects_invalid_completed_response_fields(
@@ -1186,6 +1231,44 @@ def test_upload_run_rejects_invalid_completed_response_fields(
             "stored_count": 2,
             "error_count": 0,
             "duplicate": "false",
+            "result_summary": {"chunk_ids": ["c1"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    with pytest.raises(ImportUploadError, match="invalid extracted_count"):
+        upload_run(
+            config=_config(tmp_path),
+            ledger=ledger,
+            credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+            run=run,
+        )
+
+
+def test_upload_run_rejects_negative_completed_response_counts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    ledger, job = _seed_job(tmp_path)
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=1,
+        min_importance=4,
+    )
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        return 200, {
+            "status": "completed",
+            "idempotency_key": kwargs["payload"]["idempotency_key"],
+            "extracted_count": -1,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
             "result_summary": {"chunk_ids": ["c1"]},
         }
 

@@ -29,6 +29,10 @@ def _utcnow() -> datetime:
     return datetime.now(tz=UTC)
 
 
+def _encode_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
 class ImportLedger:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -334,13 +338,13 @@ class ImportLedger:
                         batch.turn_offset,
                         batch.turn_count,
                         batch.status,
-                        json.dumps(batch.request_payload, sort_keys=True),
+                        _encode_json(batch.request_payload),
                         batch.remote_idempotency_key,
                         batch.extracted_count,
                         batch.stored_count,
                         batch.error_count,
                         1 if batch.duplicate else 0,
-                        json.dumps(batch.result_summary, sort_keys=True),
+                        _encode_json(batch.result_summary),
                         batch.last_error,
                         now,
                         now,
@@ -374,7 +378,7 @@ class ImportLedger:
                 SET request_payload = ?, updated_at = ?
                 WHERE batch_id = ?
                 """,
-                (json.dumps(request_payload, sort_keys=True), now, batch_id),
+                (_encode_json(request_payload), now, batch_id),
             )
 
     def list_runs(self) -> list[ImportRun]:
@@ -544,7 +548,7 @@ class ImportLedger:
                 """,
                 (
                     remote_idempotency_key,
-                    json.dumps(result_summary, sort_keys=True),
+                    _encode_json(result_summary),
                     detail,
                     now,
                     batch_id,
@@ -582,7 +586,7 @@ class ImportLedger:
                     stored_count,
                     error_count,
                     1 if duplicate else 0,
-                    json.dumps(result_summary, sort_keys=True),
+                    _encode_json(result_summary),
                     now,
                     batch_id,
                 ),

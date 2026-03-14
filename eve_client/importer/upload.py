@@ -61,6 +61,18 @@ class ImportUploadResult:
         }
 
 
+def _serialize_result_summary(raw_value: dict[str, object]) -> bytes | None:
+    try:
+        return json.dumps(
+            raw_value,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    except (RecursionError, TypeError, ValueError):
+        return None
+
+
 def _sanitize_error(value: object) -> str:
     return str(value).replace("\n", " ").strip()
 
@@ -318,7 +330,14 @@ def _normalize_remote_idempotency_key(
 def _normalize_remote_result_summary(raw_value: object) -> dict[str, object]:
     if not isinstance(raw_value, dict):
         return {}
-    encoded = json.dumps(raw_value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    encoded = _serialize_result_summary(raw_value)
+    if encoded is None:
+        return {
+            "truncated": True,
+            "detail": (
+                "Managed importer result summary could not be serialized safely and was omitted."
+            ),
+        }
     if len(encoded) <= _MAX_REMOTE_RESULT_SUMMARY_BYTES:
         return raw_value
     return {
@@ -333,6 +352,8 @@ def _coerce_remote_count(raw_value: object, *, field_name: str) -> int:
     if isinstance(raw_value, bool):
         raise ImportUploadError(f"Managed importer returned an invalid {field_name}.")
     if isinstance(raw_value, int):
+        if raw_value < 0:
+            raise ImportUploadError(f"Managed importer returned an invalid {field_name}.")
         return raw_value
     if isinstance(raw_value, str) and raw_value.isdigit():
         return int(raw_value)
@@ -599,14 +620,13 @@ def upload_run(
                     (
                         item
                         for item in ledger.get_run_batches(run.run_id)
-                        if item.status == "pending" or _is_retryable_batch_failure(item)
+                        if item.status in {"pending", "remote-processing"}
+                        or _is_retryable_batch_failure(item)
                     ),
                     None,
                 )
                 if batch is None:
                     break
-                if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
-                    continue
                 payload = _materialize_request_payload(batch)
                 expected_request_key = str(payload["idempotency_key"])
                 if (
@@ -617,6 +637,8 @@ def upload_run(
                     raise ImportUploadError(
                         "Importer remote-processing batch idempotency drifted before resume."
                     )
+                if not ledger.mark_batch_submitting(batch_id=batch.batch_id):
+                    continue
                 effective_timeout = _effective_timeout(payload=payload, base_timeout=timeout)
                 attempt = 0
                 while True:
@@ -683,7 +705,6 @@ def upload_run(
                             raise ImportUploadError(
                                 "Importer run batch changed state unexpectedly during remote-processing handoff."
                             )
-                        current_batch_id = None
                         break
                     elif remote_status == "failed":
                         detail = "Managed importer batch failed remotely."
