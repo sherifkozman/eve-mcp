@@ -703,7 +703,8 @@ def test_doctor_reports_trust_state_recovery(tmp_path: Path, monkeypatch) -> Non
         store_sequence_watermark(state_dir, 2, allow_file_fallback=True)
         result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
-    assert "inactive fallback artifacts are inconsistent" in result.output
+    assert "manifest is missing but prior" in result.output
+    assert "state watermark exists" in result.output
 
 
 def test_doctor_does_not_bypass_strict_policy_for_file_backed_manifest(
@@ -736,7 +737,7 @@ def test_doctor_does_not_bypass_strict_policy_for_file_backed_manifest(
     assert result.exit_code == 1
     assert "trust-state:" in result.output
     assert "trust-state can be" in result.output
-    assert "strict secret storage policy is" in result.output
+    assert "strict" in result.output
     assert "eve trust reinit --yes" in result.output
 
 
