@@ -44,6 +44,7 @@ from eve_client.lock import (
     installer_lock_is_held,
     read_lock_metadata,
 )
+from eve_client.memory_cli import memory_app
 from eve_client.manifest import ManifestIntegrityError, load_manifest
 from eve_client.oauth_device import (
     OAuthDeviceFlowError,
@@ -64,6 +65,7 @@ import_app = typer.Typer(
     help="Local importer workflow for Claude Code, Codex, and Gemini data.",
 )
 app.add_typer(import_app, name="import")
+app.add_typer(memory_app, name="memory")
 console = Console()
 CODEX_BEARER_TOKEN_ENV_VAR = "EVE_CODEX_BEARER_TOKEN"
 MCP_OAUTH_SCOPES = (
@@ -108,9 +110,7 @@ def _parse_tools(raw_tools: list[str] | None) -> list[str] | None:
 def _normalize_import_source(value: str) -> ImportSourceType:
     normalized = value.strip().lower()
     if normalized not in {"claude-code", "codex-cli", "gemini-cli"}:
-        raise typer.BadParameter(
-            "--source must be 'claude-code', 'codex-cli', or 'gemini-cli'"
-        )
+        raise typer.BadParameter("--source must be 'claude-code', 'codex-cli', or 'gemini-cli'")
     return normalized  # type: ignore[return-value]
 
 
@@ -598,6 +598,15 @@ def _recover_from_unavailable_credential_store(
     return _enable_file_fallback(config)
 
 
+def _stored_credential_for_tool(credential_store, tool_name: str, auth_mode: str):
+    try:
+        if auth_mode == "oauth":
+            return credential_store.get_bearer_token(tool_name)
+        return credential_store.get_api_key(tool_name)
+    except CredentialStoreUnavailableError:
+        return None, "unavailable"
+
+
 def _tool_status_payload(detected, config, credential_store):
     eve_configured = False
     credential = None
@@ -621,11 +630,13 @@ def _tool_status_payload(detected, config, credential_store):
         if disabled_state is None:
             from eve_client.merge import has_eve_toml_entry
 
+            auth_mode = get_adapter(detected.name).auth_mode
             eve_configured = has_eve_toml_entry(detected.config_path)
-            try:
-                credential, source = credential_store.get_api_key(detected.name)
-            except CredentialStoreUnavailableError:
-                credential, source = None, "unavailable"
+            credential, source = _stored_credential_for_tool(
+                credential_store,
+                detected.name,
+                auth_mode,
+            )
         item["codex"] = {
             "enabled": config.codex_enabled,
             "source": config.codex_source,
@@ -635,7 +646,7 @@ def _tool_status_payload(detected, config, credential_store):
             or classify_codex_local_state(
                 config,
                 detected,
-                auth_mode=get_adapter(detected.name).auth_mode,
+                auth_mode=auth_mode,
                 credential_present=bool(credential),
                 eve_configured=eve_configured,
             ),
@@ -672,7 +683,7 @@ def import_scan(
     limit: int = typer.Option(20, "--limit", min=1, max=200),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Scan local Claude Code, Codex, or Gemini session files and persist a local scan ledger entry."""
+    """Scan local session files and persist a local scan ledger entry."""
     config = resolve_config()
     source_type = _normalize_import_source(source) if source else None
     roots_by_source: dict[ImportSourceType, list[Path]] | None = None
@@ -742,9 +753,7 @@ def import_preview(
     try:
         turns = list(adapter.parse(candidate))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise typer.BadParameter(
-            f"Failed to parse {source_type} source at {path}: {exc}"
-        ) from exc
+        raise typer.BadParameter(f"Failed to parse {source_type} source at {path}: {exc}") from exc
     payload = {
         "candidate": candidate.to_dict(),
         "turn_count": len(turns),
@@ -932,7 +941,8 @@ def import_upload(
         console.print(f"[yellow]Problem batches: {len(failed)}[/yellow]")
         for batch in failed[:5]:
             console.print(
-                f"- batch {batch.batch_index} ({batch.status}) {batch.last_error or 'unknown error'}"
+                f"- batch {batch.batch_index} ({batch.status}) "
+                f"{batch.last_error or 'unknown error'}"
             )
 
 
@@ -1596,15 +1606,17 @@ def doctor(
             if codex_state is None:
                 from eve_client.merge import has_eve_toml_entry
 
-                try:
-                    credential, _ = credential_store.get_api_key(detected_tool.name)
-                    credential_present = bool(credential)
-                except CredentialStoreUnavailableError:
-                    credential_present = False
+                auth_mode = get_adapter(detected_tool.name).auth_mode
+                credential, _ = _stored_credential_for_tool(
+                    credential_store,
+                    detected_tool.name,
+                    auth_mode,
+                )
+                credential_present = bool(credential)
                 codex_state = classify_codex_local_state(
                     config,
                     detected_tool,
-                    auth_mode=get_adapter(detected_tool.name).auth_mode,
+                    auth_mode=auth_mode,
                     credential_present=credential_present,
                     eve_configured=has_eve_toml_entry(detected_tool.config_path),
                 )
