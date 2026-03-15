@@ -82,25 +82,23 @@ class LocalCredentialStore(CredentialStore):
     def _set_secret(self, tool: ToolName, auth_mode: str, secret: str) -> CredentialRecord:
         key_name = self._key_name(tool, auth_mode)
         label = "api-key" if auth_mode == "api-key" else auth_mode
+        # Write to file store first (avoids keychain prompts on macOS).
+        # Keyring is kept as secondary write for backward compat.
+        if self.allow_file_fallback:
+            payload = self.file_store.load()
+            payload[key_name] = secret
+            self.file_store.write(payload)
         try:
             self.keyring_store.set(key_name, secret)
-            return CredentialRecord(
-                tool=tool, auth_mode=auth_mode, source="keyring", value_masked=_mask_secret(secret)
-            )
         except KeyringError:
             if not self.allow_file_fallback:
                 raise CredentialStoreUnavailableError(
                     f"No secure keyring backend available for {tool}; file fallback is disabled."
                 ) from None
-            payload = self.file_store.load()
-            payload[key_name] = secret
-            self.file_store.write(payload)
-            return CredentialRecord(
-                tool=tool,
-                auth_mode=label,
-                source="file-fallback",
-                value_masked=_mask_secret(secret),
-            )
+        source = "file-fallback" if self.allow_file_fallback else "keyring"
+        return CredentialRecord(
+            tool=tool, auth_mode=auth_mode, source=source, value_masked=_mask_secret(secret)
+        )
 
     def _get_secret(self, tool: ToolName, auth_mode: str) -> tuple[str | None, str | None]:
         key_name = self._key_name(tool, auth_mode)

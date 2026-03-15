@@ -9,7 +9,7 @@ from eve_client.auth.local_store import LocalCredentialStore
 from keyring.errors import KeyringError
 
 
-def test_auth_store_uses_keyring(tmp_path: Path) -> None:
+def test_auth_store_writes_file_and_keyring(tmp_path: Path) -> None:
     store = LocalCredentialStore(tmp_path)
     with (
         patch("eve_client.auth.keyring_store.keyring.set_password") as set_password,
@@ -18,9 +18,10 @@ def test_auth_store_uses_keyring(tmp_path: Path) -> None:
         record = store.set_api_key("claude-code", "eve-secret")
         value, source = store.get_api_key("claude-code")
     set_password.assert_called_once()
-    assert record.source == "keyring"
+    # File store is primary (checked first on read, written first on write)
+    assert record.source == "file-fallback"
     assert value == "eve-secret"
-    assert source == "keyring"
+    assert source == "file-fallback"
 
 
 def test_auth_store_falls_back_to_file(tmp_path: Path) -> None:
