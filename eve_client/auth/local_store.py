@@ -104,6 +104,13 @@ class LocalCredentialStore(CredentialStore):
 
     def _get_secret(self, tool: ToolName, auth_mode: str) -> tuple[str | None, str | None]:
         key_name = self._key_name(tool, auth_mode)
+        # Check file store first (avoids keychain prompts on macOS)
+        if self.allow_file_fallback:
+            payload = self.file_store.load()
+            file_value = payload.get(key_name)
+            if file_value:
+                return file_value, "file-fallback"
+        # Fall back to keyring
         try:
             value = self.keyring_store.get(key_name)
             if value:
@@ -113,10 +120,7 @@ class LocalCredentialStore(CredentialStore):
                 raise CredentialStoreUnavailableError(
                     f"No secure keyring backend available for {tool}; file fallback is disabled."
                 ) from None
-        if not self.allow_file_fallback:
-            return None, None
-        payload = self.file_store.load()
-        return payload.get(key_name), ("file-fallback" if key_name in payload else None)
+        return None, None
 
     def _delete_secret(self, tool: ToolName, auth_mode: str) -> None:
         key_name = self._key_name(tool, auth_mode)

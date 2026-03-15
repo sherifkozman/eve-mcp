@@ -54,7 +54,7 @@ def _empty_envelope() -> dict[str, object]:
 
 
 def load_manifest_envelope(
-    state_dir: Path, *, allow_file_fallback: bool = False, sync_back: bool = True
+    state_dir: Path, *, allow_file_fallback: bool = True, sync_back: bool = True
 ) -> dict[str, object]:
     if sync_back:
         ensure_private_state_dir(state_dir)
@@ -120,7 +120,7 @@ def load_manifest_envelope(
 
 
 def load_manifest(
-    state_dir: Path, *, allow_file_fallback: bool = False, sync_back: bool = True
+    state_dir: Path, *, allow_file_fallback: bool = True, sync_back: bool = True
 ) -> list[ManifestRecord]:
     envelope = load_manifest_envelope(
         state_dir,
@@ -132,7 +132,7 @@ def load_manifest(
 
 
 def write_manifest(
-    state_dir: Path, records: list[ManifestRecord], *, allow_file_fallback: bool = False
+    state_dir: Path, records: list[ManifestRecord], *, allow_file_fallback: bool = True
 ) -> None:
     ensure_private_state_dir(state_dir)
     try:

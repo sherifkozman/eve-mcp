@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 from pathlib import Path
 
-from keyring.errors import KeyringError
-
 from eve_client.auth.file_store import FileCredentialStore
-from eve_client.auth.keyring_store import KeyringCredentialStore
 from eve_client.safe_fs import SafeFS
 from eve_client.state_dir import ensure_private_state_dir
 
@@ -53,52 +49,26 @@ def _installation_key_name(state_dir: Path) -> str:
 def load_existing_installation_id(
     state_dir: Path, *, allow_file_fallback: bool, sync_back: bool = True
 ) -> str | None:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     if sync_back:
         ensure_private_state_dir(state_dir)
     key_name = _installation_key_name(state_dir)
-    keyring_store = KeyringCredentialStore()
-    try:
-        value = keyring_store.get(key_name)
-    except KeyringError:
-        if not allow_file_fallback:
-            raise StateBindingError(
-                "Unable to load installation identity without explicit file fallback."
-            ) from None
-        value = None
-    if value and allow_file_fallback and sync_back:
-        payload = _file_store(state_dir).load()
-        if payload.get(key_name) != value:
-            payload[key_name] = value
-            _file_store(state_dir).write(payload)
-        return value
-    if value:
-        return value
-    if not allow_file_fallback:
-        return None
     payload = _load_file_payload(state_dir, read_only=not sync_back)
-    existing = payload.get(key_name)
-    return existing or None
+    return payload.get(key_name) or None
 
 
 def get_or_create_installation_id(state_dir: Path, *, allow_file_fallback: bool) -> str:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     ensure_private_state_dir(state_dir)
     key_name = _installation_key_name(state_dir)
-    existing = load_existing_installation_id(state_dir, allow_file_fallback=allow_file_fallback)
+    store = _file_store(state_dir)
+    payload = store.load()
+    existing = payload.get(key_name)
     if existing:
         return existing
     installation_id = hashlib.sha256(f"{state_dir.resolve(strict=False)}".encode()).hexdigest()[:24]
-    keyring_store = KeyringCredentialStore()
-    try:
-        keyring_store.set(key_name, installation_id)
-    except KeyringError:
-        if not allow_file_fallback:
-            raise StateBindingError(
-                "Unable to persist installation identity without explicit file fallback."
-            ) from None
-    if allow_file_fallback:
-        payload = _file_store(state_dir).load()
-        payload[key_name] = installation_id
-        _file_store(state_dir).write(payload)
+    payload[key_name] = installation_id
+    store.write(payload)
     return installation_id
 
 
@@ -116,6 +86,7 @@ def _sequence_key_name(state_dir: Path, *, allow_file_fallback: bool) -> str:
 def load_existing_sequence_watermark(
     state_dir: Path, *, allow_file_fallback: bool, sync_back: bool = True
 ) -> int:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     if sync_back:
         ensure_private_state_dir(state_dir)
     installation_id = load_existing_installation_id(
@@ -124,28 +95,6 @@ def load_existing_sequence_watermark(
     if installation_id is None:
         return 0
     key_name = _sequence_key_name_for_installation_id(installation_id)
-    keyring_store = KeyringCredentialStore()
-    try:
-        value = keyring_store.get(key_name)
-    except KeyringError:
-        if not allow_file_fallback:
-            raise StateBindingError(
-                "Unable to load state binding watermark without explicit file fallback."
-            ) from None
-        value = None
-    if value is not None:
-        try:
-            watermark = int(value)
-        except ValueError:
-            raise StateBindingError("State binding watermark is malformed.") from None
-        if allow_file_fallback and sync_back:
-            payload = _file_store(state_dir).load()
-            if payload.get(key_name) != value:
-                payload[key_name] = value
-                _file_store(state_dir).write(payload)
-        return watermark
-    if not allow_file_fallback:
-        return 0
     payload = _load_file_payload(state_dir, read_only=not sync_back)
     raw = payload.get(key_name)
     if raw is None:
@@ -157,42 +106,23 @@ def load_existing_sequence_watermark(
 
 
 def load_sequence_watermark(state_dir: Path, *, allow_file_fallback: bool) -> int:
-    return load_existing_sequence_watermark(
-        state_dir, allow_file_fallback=allow_file_fallback
-    )
+    return load_existing_sequence_watermark(state_dir, allow_file_fallback=allow_file_fallback)
 
 
 def store_sequence_watermark(state_dir: Path, sequence: int, *, allow_file_fallback: bool) -> None:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     ensure_private_state_dir(state_dir)
     key_name = _sequence_key_name(state_dir, allow_file_fallback=allow_file_fallback)
-    keyring_store = KeyringCredentialStore()
-    persist_fallback = False
-    try:
-        keyring_store.set(key_name, str(sequence))
-        persist_fallback = allow_file_fallback and keyring_store.backend_is_low_assurance()
-        if not persist_fallback:
-            return
-    except KeyringError:
-        if not allow_file_fallback:
-            raise StateBindingError(
-                "Unable to persist state binding watermark without explicit file fallback."
-            ) from None
-        persist_fallback = True
-    if persist_fallback:
-        store = _file_store(state_dir)
-        payload = store.load()
-        payload[key_name] = str(sequence)
-        store.write(payload)
+    store = _file_store(state_dir)
+    payload = store.load()
+    payload[key_name] = str(sequence)
+    store.write(payload)
 
 
 def clear_sequence_watermark(state_dir: Path, *, allow_file_fallback: bool) -> None:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     ensure_private_state_dir(state_dir)
     key_name = _sequence_key_name(state_dir, allow_file_fallback=allow_file_fallback)
-    keyring_store = KeyringCredentialStore()
-    with contextlib.suppress(KeyringError):
-        keyring_store.delete(key_name)
-    if not allow_file_fallback:
-        return
     store = _file_store(state_dir)
     payload = store.load()
     if key_name in payload:
@@ -201,13 +131,9 @@ def clear_sequence_watermark(state_dir: Path, *, allow_file_fallback: bool) -> N
 
 
 def clear_installation_id(state_dir: Path, *, allow_file_fallback: bool) -> None:
+    # allow_file_fallback is kept for API compatibility; file is always used (keyring removed).
     ensure_private_state_dir(state_dir)
     key_name = _installation_key_name(state_dir)
-    keyring_store = KeyringCredentialStore()
-    with contextlib.suppress(KeyringError):
-        keyring_store.delete(key_name)
-    if not allow_file_fallback:
-        return
     store = _file_store(state_dir)
     payload = store.load()
     if key_name in payload:
@@ -236,5 +162,6 @@ def verify_sequence_watermark(
         )
     if sequence < watermark:
         raise StateBindingError(
-            f"Installer manifest sequence replay detected; current sequence {sequence} is older than watermark {watermark}."
+            f"Installer manifest sequence replay detected; current sequence {sequence} "
+            f"is older than watermark {watermark}."
         )

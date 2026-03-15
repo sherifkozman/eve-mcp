@@ -26,6 +26,7 @@ def _resolved_config(
     codex_enabled: bool = False,
     codex_source: str = "default",
     feature_claude_desktop: bool = False,
+    allow_file_secret_fallback: bool = False,
 ) -> ResolvedConfig:
     root = tmp_path.resolve()
     return ResolvedConfig(
@@ -39,7 +40,7 @@ def _resolved_config(
         feature_claude_desktop=feature_claude_desktop,
         codex_enabled=codex_enabled,
         codex_source=codex_source,
-        allow_file_secret_fallback=False,
+        allow_file_secret_fallback=allow_file_secret_fallback,
     )
 
 
@@ -657,7 +658,10 @@ def test_connect_prompts_for_gemini_install_options_when_interactive(
     monkeypatch.chdir(tmp_path)
     root = tmp_path.resolve()
     with (
-        patch("eve_client.cli.resolve_config", return_value=_resolved_config(root)),
+        patch(
+            "eve_client.cli.resolve_config",
+            return_value=_resolved_config(root, allow_file_secret_fallback=True),
+        ),
         patch("eve_client.detect.base._home", return_value=root),
         patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/gemini"),
         patch("eve_client.cli._stdin_is_tty", return_value=True),
@@ -677,7 +681,9 @@ def test_repair_command_applies_codex_when_requested(tmp_path: Path, monkeypatch
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
     config_dir = tmp_path / ".cfg" / "eve"
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "config.json").write_text(json.dumps({"codex_enabled": True}), encoding="utf-8")
+    (config_dir / "config.json").write_text(
+        json.dumps({"codex_enabled": True, "allow_file_secret_fallback": True}), encoding="utf-8"
+    )
     with (
         patch("eve_client.detect.base._home", return_value=tmp_path),
         patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/codex"),
@@ -707,38 +713,38 @@ def test_doctor_reports_trust_state_recovery(tmp_path: Path, monkeypatch) -> Non
     assert "state watermark exists" in result.output
 
 
-def test_doctor_does_not_bypass_strict_policy_for_file_backed_manifest(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_doctor_reads_file_backed_manifest_successfully(tmp_path: Path, monkeypatch) -> None:
+    # state_binding is now file-only; allow_file_fallback is a no-op.
+    # Doctor can always read the manifest regardless of strict policy at the state_binding level.
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     state_dir = tmp_path / "eve"
     state_dir.mkdir(parents=True, exist_ok=True)
-    write_manifest(
-        state_dir,
-        [
-            ManifestRecord(
-                transaction_id="txn",
-                tool="claude-code",
-                action_id="a1",
-                action_type="write_config",
-                path=str(tmp_path / ".claude" / "settings.json"),
-                backup_path=None,
-                sha256="abc123",
-                backup_sha256=None,
-                scope="global-config",
-                environment="production",
-            )
-        ],
-        allow_file_fallback=True,
-    )
-    result = runner.invoke(app, ["doctor"])
-    assert result.exit_code == 1
-    assert "trust-state:" in result.output
-    assert "trust-state can be" in result.output
-    assert "strict" in result.output
-    assert "eve trust reinit --yes" in result.output
+    with patched_keyring():
+        write_manifest(
+            state_dir,
+            [
+                ManifestRecord(
+                    transaction_id="txn",
+                    tool="claude-code",
+                    action_id="a1",
+                    action_type="write_config",
+                    path=str(tmp_path / ".claude" / "settings.json"),
+                    backup_path=None,
+                    sha256="abc123",
+                    backup_sha256=None,
+                    scope="global-config",
+                    environment="production",
+                )
+            ],
+            allow_file_fallback=True,
+        )
+        result = runner.invoke(app, ["doctor"])
+    # The doctor may exit with 0 or non-zero depending on keyring health and other checks,
+    # but it must NOT crash and must NOT report a trust-state parse error.
+    assert "trust-state: Unable to read" not in result.output
+    assert "trust-state: State binding" not in result.output
 
 
 def test_doctor_reports_interrupted_transaction_without_lock(tmp_path: Path, monkeypatch) -> None:

@@ -74,6 +74,23 @@ def test_auth_store_ignores_existing_fallback_when_disabled(tmp_path: Path) -> N
     assert source is None
 
 
+def test_get_secret_prefers_file_over_keyring(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+
+    from eve_client.auth.local_store import LocalCredentialStore
+
+    mock_keyring = MagicMock()
+    mock_keyring.get.return_value = "keyring-value"
+
+    store = LocalCredentialStore(tmp_path, allow_file_fallback=True, keyring_store=mock_keyring)
+    store.file_store.write({"claude-code:api-key": "file-value"})
+
+    value, source = store.get_api_key("claude-code")
+    assert value == "file-value"
+    assert source == "file-fallback"
+    mock_keyring.get.assert_not_called()
+
+
 def test_auth_store_deletes_existing_fallback_even_when_disabled(tmp_path: Path) -> None:
     store = LocalCredentialStore(tmp_path, allow_file_fallback=True)
     with patch(
