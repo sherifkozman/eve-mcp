@@ -14,6 +14,7 @@ from rich.table import Table
 
 from eve_client.auth import CredentialStoreUnavailableError, LocalCredentialStore
 from eve_client.config import resolve_api_base_url, resolve_config
+from eve_client.oauth_device import refresh_auth0_token
 
 memory_app = typer.Typer(name="memory", help="Search and inspect Eve memories.")
 console = Console()
@@ -26,8 +27,11 @@ _REQUEST_TIMEOUT = 30.0
 def _get_auth_headers(config) -> dict[str, str]:  # noqa: ANN001
     """Build auth headers from stored credentials.
 
-    Tries OAuth bearer token first, then API key, for each supported tool.
+    Tries OAuth bearer token first (with refresh if expired), then API key,
+    for each supported tool.
     """
+    import time
+
     store = LocalCredentialStore(
         config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
     )
@@ -36,6 +40,20 @@ def _get_auth_headers(config) -> dict[str, str]:  # noqa: ANN001
         try:
             session, _source = store.get_oauth_session(tool_name)  # type: ignore[arg-type]
             if session and session.access_token:
+                # Check if token is expired and refresh if possible
+                if session.expires_at and session.expires_at < time.time():
+                    if session.refresh_token:
+                        try:
+                            refreshed = refresh_auth0_token(
+                                session.refresh_token,
+                                session.client_id,
+                            )
+                            store.save_oauth_session(tool_name, refreshed)  # type: ignore[arg-type]
+                            return {"Authorization": f"Bearer {refreshed.access_token}"}
+                        except Exception:
+                            continue  # Try next tool
+                    else:
+                        continue  # Expired with no refresh token
                 return {"Authorization": f"Bearer {session.access_token}"}
         except CredentialStoreUnavailableError:
             pass
@@ -63,9 +81,9 @@ def _http_request(
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:  # noqa: S310
-            return response.status, _parse_json(response.read().decode("utf-8"))
+            return response.status, _parse_json(response.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
-        return exc.code, _parse_json(exc.read().decode("utf-8"))
+        return exc.code, _parse_json(exc.read().decode("utf-8", errors="replace"))
     except (urllib.error.URLError, TimeoutError) as exc:
         return 0, {"error": str(exc)}
 
@@ -80,7 +98,7 @@ def _parse_json(body: str) -> dict[str, Any] | None:
 @memory_app.command()
 def search(
     query: str = typer.Argument(..., help="Search query text"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max results to return (1-100)"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100, help="Max results (1-100)"),
     context: str = typer.Option(
         "naya", "--context", "-c", help="Context scope (naya, personal, es)"
     ),
@@ -90,6 +108,12 @@ def search(
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Search memories via the Eve REST API."""
+    _VALID_CONTEXTS = {"naya", "personal", "es"}
+    _VALID_STORES = {"semantic", "episodic", "all"}
+    if context.lower() not in _VALID_CONTEXTS:
+        raise typer.BadParameter(f"context must be one of {_VALID_CONTEXTS}, got '{context}'")
+    if store.lower() not in _VALID_STORES:
+        raise typer.BadParameter(f"store must be one of {_VALID_STORES}, got '{store}'")
     config = resolve_config()
     auth_headers = _get_auth_headers(config)
     if not auth_headers:
