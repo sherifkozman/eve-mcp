@@ -61,7 +61,8 @@ pipx install eve-client
 - writes Eve-managed MCP config
 - installs prompt/companion files where supported
 - installs hooks where supported
-- stores auth locally using keyring-first storage
+- stores auth locally using file-based credential storage
+- provides `eve memory search` and `eve memory status` commands for direct memory access
 - verifies, repairs, rolls back, and uninstalls Eve-managed changes
 - imports local conversation history into Eve from supported clients
 
@@ -183,6 +184,15 @@ eve verify --tool claude-code
 eve auth login --tool codex-cli --auth-mode oauth
 eve install --tool codex-cli --auth-mode oauth --apply --yes
 eve verify --tool codex-cli --auth-mode oauth
+```
+
+### Memory commands
+
+```bash
+eve memory search "what database do we use" --context naya
+eve memory search "auth patterns" --limit 5 --json
+eve memory status
+eve memory status --json
 ```
 
 ### Common commands
