@@ -78,8 +78,10 @@ Core commands:
 ```bash
 eve import scan --source claude-code
 eve import preview --source claude-code --path <session_file>
+eve import jobs                              # list scan jobs
 eve auth login --tool claude-code
 eve import upload --job <scan_job_id> --use-auth-from claude-code
+eve import runs                              # list upload runs
 eve import resume --run <run_id>
 eve import cleanup --days 30
 eve import cleanup --days 30 --apply
