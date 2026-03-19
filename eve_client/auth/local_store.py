@@ -81,7 +81,6 @@ class LocalCredentialStore(CredentialStore):
 
     def _set_secret(self, tool: ToolName, auth_mode: str, secret: str) -> CredentialRecord:
         key_name = self._key_name(tool, auth_mode)
-        label = "api-key" if auth_mode == "api-key" else auth_mode
         # Write to file store first (avoids keychain prompts on macOS).
         # Keyring is kept as secondary write for backward compat.
         if self.allow_file_fallback:
