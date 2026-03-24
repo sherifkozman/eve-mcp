@@ -20,15 +20,21 @@ Request access at [evemem.com](https://evemem.com). After provisioning, sign in 
 uv tool install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
+No uv? Use:
+
+```bash
+pipx install git+https://github.com/sherifkozman/eve-mcp.git
+```
+
 Verify: `eve version`
 
 **3. Connect Claude Code** (swap `--tool gemini-cli` for Gemini CLI)
 
 ```bash
-eve auth login --tool claude-code --api-key <your-eve-api-key>
-eve install --tool claude-code --apply --yes
-eve verify --tool claude-code
+eve connect --tool claude-code --api-key <your-eve-api-key>
 ```
+
+This combines auth, install, and verify. For step-by-step, see [API key flow](#api-key-flow) below.
 
 Expected output:
 
@@ -38,6 +44,8 @@ Expected output:
 ✓ Hooks installed
 ✓ Eve memory is connected and responding
 ```
+
+If `eve connect` fails: run `eve doctor --tool claude-code` and check the diagnostics output. Open an issue at [github.com/sherifkozman/eve-mcp](https://github.com/sherifkozman/eve-mcp/issues).
 
 **4. Test memory across sessions**
 
@@ -241,7 +249,7 @@ eve verify --tool claude-code
 
 ```bash
 eve auth login --tool claude-code --api-key <eve-key>
-eve install --tool claude-code --apply --yes
+eve install --tool claude-code --apply --yes  # --apply writes config, --yes skips confirmation
 eve verify --tool claude-code
 ```
 
