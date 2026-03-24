@@ -8,6 +8,19 @@
 
 It detects local tools, configures MCP, installs Eve-managed prompt and hook files where supported, manages auth, and can verify, repair, or remove the integration later. It can also import local history from supported clients.
 
+## How Eve Works
+
+When you run `eve install`, Eve configures four lifecycle hooks that run automatically — no commands needed during your sessions.
+
+| Moment                | What Eve does                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| **Session opens**     | Injects your saved preferences, learned rules, and recent session history directly into Claude      |
+| **Every prompt**      | Silently searches your memory and enriches each message with relevant context before Claude sees it |
+| **Before compaction** | Preserves critical facts before Claude's context window compresses                                  |
+| **Session ends**      | Reads the full transcript, extracts new learnings, and stores them for future sessions              |
+
+Lifecycle hooks are available on Claude Code and Gemini CLI. Eve also connects to Codex CLI and other MCP-compatible clients using prompt seeding, so you get memory across all your tools.
+
 ## Quick Start — 5 minutes
 
 **1. Get an Eve workspace**
@@ -41,9 +54,11 @@ Expected output:
 ```
 ✓ MCP config written
 ✓ CLAUDE.md companion updated
-✓ Hooks installed
+✓ Lifecycle hooks configured — Eve auto-injects memory context on every session
 ✓ Eve memory is connected and responding
 ```
+
+> **What just happened?** Eve installed four lifecycle hooks. From this point forward, every Claude Code session starts with your memory context pre-loaded, and ends with new learnings captured. You never need to ask Claude to use Eve.
 
 If `eve connect` fails: run `eve doctor --tool claude-code` and check the diagnostics output. Open an issue at [github.com/sherifkozman/eve-mcp](https://github.com/sherifkozman/eve-mcp/issues).
 
@@ -121,7 +136,7 @@ pipx install eve-client
 - shows an install plan before changing files
 - writes Eve-managed MCP config
 - installs prompt/companion files where supported
-- installs hooks where supported
+- installs four lifecycle hooks that auto-inject memory context on every session (SessionStart, UserPromptSubmit, PreCompact, Stop)
 - stores auth locally using file-based credential storage
 - provides `eve memory search` and `eve memory status` commands for direct memory access
 - verifies, repairs, rolls back, and uninstalls Eve-managed changes
