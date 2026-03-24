@@ -20,7 +20,11 @@ Request access at [evemem.com](https://evemem.com). After provisioning, sign in 
 uv tool install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
-No uv? Use: `pipx install git+https://github.com/sherifkozman/eve-mcp.git`
+No uv? Use:
+
+```bash
+pipx install git+https://github.com/sherifkozman/eve-mcp.git
+```
 
 Verify: `eve version`
 
@@ -41,7 +45,7 @@ Expected output:
 ✓ Eve memory is connected and responding
 ```
 
-If verify fails: run `eve doctor --tool claude-code` and check the diagnostics output. Open an issue at [github.com/sherifkozman/eve-mcp](https://github.com/sherifkozman/eve-mcp/issues).
+If `eve connect` fails: run `eve doctor --tool claude-code` and check the diagnostics output. Open an issue at [github.com/sherifkozman/eve-mcp](https://github.com/sherifkozman/eve-mcp/issues).
 
 **4. Test memory across sessions**
 
