@@ -19,7 +19,7 @@ When you run `eve install`, Eve configures four lifecycle hooks that run automat
 | **Before compaction** | Preserves critical facts before Claude's context window compresses                                  |
 | **Session ends**      | Reads the full transcript, extracts new learnings, and stores them for future sessions              |
 
-This is the same zero-effort UX as any AI plugin — except Eve works on Claude Code, Gemini CLI, Codex CLI, and any MCP-compatible client, not just one tool.
+Lifecycle hooks are available on Claude Code and Gemini CLI. Eve also connects to Codex CLI and other MCP-compatible clients using prompt seeding, so you get memory across all your tools.
 
 ## Quick Start — 5 minutes
 
