@@ -1,8 +1,57 @@
 # Eve MCP Client
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python >= 3.11](https://img.shields.io/badge/python-%E2%89%A53.11-blue)](https://www.python.org/downloads/)
+[![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)](https://evemem.com)
+
 `eve-client` is the local installer and integration CLI for connecting supported AI tools to the hosted Eve memory service.
 
 It detects local tools, configures MCP, installs Eve-managed prompt and hook files where supported, manages auth, and can verify, repair, or remove the integration later. It can also import local history from supported clients.
+
+## Quick Start — 5 minutes
+
+**1. Get an Eve workspace**
+
+Request access at [evemem.com](https://evemem.com). After provisioning, sign in and create an API key at [evemem.com/app/overview](https://evemem.com/app/overview).
+
+**2. Install the client**
+
+```bash
+uv tool install git+https://github.com/sherifkozman/eve-mcp.git
+```
+
+Verify: `eve version`
+
+**3. Connect Claude Code** (swap `--tool gemini-cli` for Gemini CLI)
+
+```bash
+eve auth login --tool claude-code --api-key <your-eve-api-key>
+eve install --tool claude-code --apply --yes
+eve verify --tool claude-code
+```
+
+Expected output:
+
+```
+✓ MCP config written
+✓ CLAUDE.md companion updated
+✓ Hooks installed
+✓ Eve memory is connected and responding
+```
+
+**4. Test memory across sessions**
+
+In Claude Code, tell Claude:
+
+> "Remember that I use PostgreSQL with a users table — email and created_at columns."
+
+Start a **new** Claude Code session and ask:
+
+> "What database setup did I mention?"
+
+Claude will recall it via Eve. ✓
+
+See [`examples/`](./examples/) for manual MCP config snippets (no installer needed).
 
 ## Install
 
@@ -40,6 +89,10 @@ eve version
 eve --help
 ```
 
+### Manual config (no installer)
+
+See [`examples/`](./examples/) for ready-to-paste MCP config snippets for Claude Code, Gemini CLI, and Codex CLI.
+
 ### From PyPI later
 
 Once published, the package install will become:
@@ -69,6 +122,7 @@ pipx install eve-client
 ## Importing Local History
 
 Supported importer sources today:
+
 - Claude Code
 - Codex CLI
 - Gemini CLI
@@ -88,20 +142,24 @@ eve import cleanup --days 30 --apply
 ```
 
 How it works:
+
 - parses local history on your machine
 - uploads normalized batches to the managed Eve service
 - keeps a local SQLite ledger for scan jobs, upload runs, replay, and resume
 - supports dry-run cleanup of old completed local importer runs by default
 
 Importer maintenance:
+
 - `eve import cleanup` is a generic local ledger maintenance command, not a client-specific import source feature
 
 Auth note:
+
 - avoid passing secrets directly on the command line when possible
 - prefer `eve auth login ...` first, then run importer commands without repeating the API key
 - in an interactive shell, `eve auth login --tool claude-code` prompts for the key securely
 
 Current rollout note:
+
 - correctness and resume are solid
 - very large imports, especially Claude-heavy ones, may still be slower than ideal while batching defaults continue to be tuned
 
@@ -110,37 +168,44 @@ Current rollout note:
 ### Claude Code
 
 Supported today:
+
 - MCP config
 - `CLAUDE.md` companion file
 - package-managed hooks
 - importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
+
 - Eve API key
 
 ### Gemini CLI
 
 Supported today:
+
 - MCP config
 - `GEMINI.md` companion file
 - package-managed hooks
 - importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
+
 - Eve API key
 
 ### Codex CLI
 
 Supported today:
+
 - MCP config
 - Eve-owned OAuth login
 - runtime bearer token injection
 - importer support: `scan`, `preview`, `upload`, `resume`
 
 Primary auth path today:
+
 - Eve OAuth
 
 Important:
+
 - native Codex MCP login is **not** the supported Eve path
 
 ### Claude Desktop

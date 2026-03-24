@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "eve-memory": {
+      "httpUrl": "https://mcp.evemem.com/mcp",
+      "headers": {
+        "X-API-Key": "eve_YOUR_TENANT_KEY_HERE",
+        "X-Source-Agent": "gemini_cli"
+      }
+    }
+  }
+}
