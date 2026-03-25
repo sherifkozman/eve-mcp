@@ -8,7 +8,7 @@ license = { text = "Apache-2.0" }
 authors = [
     { name = "Sherif Kozman" },
 ]
-keywords = ["eve", "mcp", "ai", "cli", "installer"]
+keywords = ["eve", "mcp", "ai", "cli", "installer", "memory"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -26,6 +26,9 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+server = ["mcp>=1.20", "httpx>=0.27"]
+
 [project.urls]
 Homepage = "https://evemem.com"
 Repository = "https://github.com/sherifkozman/eve-mcp"
@@ -35,6 +38,7 @@ Issues = "https://github.com/sherifkozman/eve-mcp/issues"
 eve = "eve_client.cli:main"
 eve-claude-hook = "eve_client.claude_hooks:main"
 eve-gemini-hook = "eve_client.gemini_hooks:main"
+eve-mcp-server = "eve_client.server:main"
 
 [build-system]
 requires = ["hatchling"]
