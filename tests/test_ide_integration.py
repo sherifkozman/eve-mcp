@@ -241,6 +241,10 @@ class TestCompanionPlacement:
         assert "### Read discipline" in content
         assert "### Write discipline" in content
         assert "### Session behavior" in content
+        assert 'memory_search(store="preference")' in content
+        assert 'memory_store(store="preference")' in content
+        assert "Use episodic memory for session, event, or history recall." in content
+        assert "Store stable user, workflow/operating, behavior, or taste preferences in preference memory;" in content
         assert "MCP endpoint: `https://mcp.evemem.com`" in content
 
     def test_claude_code_companion_appends_to_existing(self, tmp_path: Path) -> None:
@@ -334,6 +338,9 @@ class TestCompanionPlacement:
         assert "### Use Eve when" in content
         assert "### Read discipline" in content
         assert "### Write discipline" in content
+        assert 'memory_search(store="preference")' in content
+        assert 'memory_store(store="preference")' in content
+        assert "Store stable user, workflow/operating, behavior, or taste preferences in preference memory;" in content
 
     def test_gemini_cli_companion_appends_to_existing(self, tmp_path: Path) -> None:
         companion = tmp_path / "GEMINI.md"
@@ -487,6 +494,9 @@ class TestCompanionPlacement:
         assert "<!-- EVE-END:codex-cli:v1 -->" in content
         assert "## Eve Memory Protocol" in content
         assert "### Use Eve when" in content
+        assert 'memory_search(store="preference")' in content
+        assert 'memory_store(store="preference")' in content
+        assert "Store stable user, workflow/operating, behavior, or taste preferences in preference memory;" in content
 
     def test_codex_cli_companion_appends_to_existing_agents_md(self, tmp_path: Path) -> None:
         companion = tmp_path / "AGENTS.md"

@@ -192,8 +192,11 @@ eve verify --tool codex-cli --auth-mode oauth
 
 ```bash
 eve memory search "what database do we use" --context naya
+eve memory search "which models do I prefer for UI work" --context personal --store preference
+eve memory search "which models do I prefer for UI work" --context personal --store preference --tool codex-cli
 eve memory search "auth patterns" --limit 5 --json
 eve memory status
+eve memory status --tool codex-cli
 eve memory status --json
 ```
 
@@ -249,12 +252,12 @@ X-Source-Agent = gemini_cli
 Codex should use an Eve-owned bearer token, not native `codex mcp login`.
 
 ```toml
-[mcp_servers.eve-memory]
+[mcp_servers."eve-memory"]
 url = "https://mcp.evemem.com/mcp"
 bearer_token_env_var = "EVE_CODEX_BEARER_TOKEN"
 startup_timeout_sec = 60
 
-[mcp_servers.eve-memory.headers]
+[mcp_servers."eve-memory".http_headers]
 X-Source-Agent = "codex_cli"
 ```
 

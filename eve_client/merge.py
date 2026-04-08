@@ -301,10 +301,15 @@ def companion_content(tool: ToolName, mcp_base_url: str) -> str:
             "### Read discipline\n"
             "- Search Eve before claiming you do not know prior context.\n"
             "- Prefer Eve search over re-deciding something that may already have been decided.\n"
-            "- Use the memories already injected by hooks first; search again only when you need more.\n\n"
+            "- Use the memories already injected by hooks first; search again only when you need more.\n"
+            '- Use `memory_search(store="preference")` only for explicitly stored user, workflow/operating, behavior, or taste preferences.\n'
+            "- Keep project/team decisions, durable facts, architecture choices, and relationship lookup on semantic memory even if the wording includes prefer or favorite.\n"
+            "- Use episodic memory for session, event, or history recall.\n\n"
             "### Write discipline\n"
+            '- Use `memory_store(store="preference")` for stable user, workflow/operating, behavior, or taste preferences.\n'
             "- Store only durable, reusable information.\n"
             "- Do not write every intermediate thought or routine step.\n"
+            "- Store stable user, workflow/operating, behavior, or taste preferences in preference memory; keep project/team decisions, durable facts, and architecture choices in semantic memory; keep session/event recall in episodic memory.\n"
             "- Favor concise memories with enough detail to be useful later.\n\n"
             "### Session behavior\n"
             "- Treat Eve as the long-term memory layer, not as scratchpad storage.\n"
@@ -319,8 +324,13 @@ def companion_content(tool: ToolName, mcp_base_url: str) -> str:
             "- the user corrects or updates a durable fact or preference\n\n"
             "### Read discipline\n"
             "- Search Eve before assuming past context is unavailable.\n"
-            "- Reuse durable knowledge instead of re-deriving it.\n\n"
+            "- Reuse durable knowledge instead of re-deriving it.\n"
+            '- Use `memory_search(store="preference")` only for explicitly stored user, workflow/operating, behavior, or taste preferences.\n'
+            "- Keep project/team decisions, durable facts, architecture choices, and relationship lookup on semantic memory even if the wording includes prefer or favorite.\n"
+            "- Use episodic memory for session, event, or history recall.\n\n"
             "### Write discipline\n"
+            '- Use `memory_store(store="preference")` for stable user, workflow/operating, behavior, or taste preferences.\n'
+            "- Store stable user, workflow/operating, behavior, or taste preferences in preference memory; keep project/team decisions, durable facts, and architecture choices in semantic memory; keep session/event recall in episodic memory.\n"
             "- Store durable decisions, preferences, fixes, and notable outcomes.\n"
             "- Skip routine chatter and transient reasoning."
         ),
@@ -333,8 +343,13 @@ def companion_content(tool: ToolName, mcp_base_url: str) -> str:
             "- you want to preserve a useful outcome for a future session\n\n"
             "### Read discipline\n"
             "- Search Eve before saying prior context is missing.\n"
-            "- Prefer relevant existing memories over repeating discovery work.\n\n"
+            "- Prefer relevant existing memories over repeating discovery work.\n"
+            '- Use `memory_search(store="preference")` only for explicitly stored user, workflow/operating, behavior, or taste preferences.\n'
+            "- Keep project/team decisions, durable facts, architecture choices, and relationship lookup on semantic memory even if the wording includes prefer or favorite.\n"
+            "- Use episodic memory for session, event, or history recall.\n\n"
             "### Write discipline\n"
+            '- Use `memory_store(store="preference")` for stable user, workflow/operating, behavior, or taste preferences.\n'
+            "- Store stable user, workflow/operating, behavior, or taste preferences in preference memory; keep project/team decisions, durable facts, and architecture choices in semantic memory; keep session/event recall in episodic memory.\n"
             "- Store concise durable memories, not full transcripts.\n"
             "- Keep entries specific enough to be useful later."
         ),

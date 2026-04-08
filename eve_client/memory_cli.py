@@ -22,25 +22,37 @@ console = Console()
 _SEARCH_PATH = "/memory/search"
 _HEALTH_PATH = "/health"
 _REQUEST_TIMEOUT = 30.0
+_SUPPORTED_TOOLS = ("claude-code", "gemini-cli", "codex-cli")
 
 
-def _get_auth_headers(config) -> dict[str, str]:  # noqa: ANN001
-    """Build auth headers from stored credentials.
+class AmbiguousMemoryAuthSelectionError(RuntimeError):
+    def __init__(self, tools: tuple[str, ...]) -> None:
+        self.tools = tools
+        super().__init__("multiple stored Eve credentials are available")
 
-    Tries OAuth bearer token first (with refresh if expired), then API key,
-    for each supported tool.
+
+def _tool_auth_precedence(tool_name: str) -> tuple[str, str]:
+    if tool_name in {"claude-code", "gemini-cli"}:
+        return ("api-key", "oauth")
+    return ("oauth", "api-key")
+
+
+def _auth_headers_for_tool(config, tool_name: str) -> dict[str, str]:  # noqa: ANN001
+    """Build auth headers for a single tool from stored credentials.
+
+    Uses tool-aware credential precedence and falls back to the other supported
+    credential type if the preferred one is unavailable.
     """
     import time
 
     store = LocalCredentialStore(
         config.state_dir, allow_file_fallback=config.allow_file_secret_fallback
     )
-    tools = ("claude-code", "gemini-cli", "codex-cli")
-    for tool_name in tools:
+
+    def _oauth_headers() -> dict[str, str]:
         try:
             session, _source = store.get_oauth_session(tool_name)  # type: ignore[arg-type]
             if session and session.access_token:
-                # Check if token is expired and refresh if possible
                 if session.expires_at and session.expires_at < time.time():
                     if session.refresh_token:
                         try:
@@ -51,18 +63,57 @@ def _get_auth_headers(config) -> dict[str, str]:  # noqa: ANN001
                             store.save_oauth_session(tool_name, refreshed)  # type: ignore[arg-type]
                             return {"Authorization": f"Bearer {refreshed.access_token}"}
                         except Exception:
-                            continue  # Try next tool
-                    else:
-                        continue  # Expired with no refresh token
+                            return {}
+                    return {}
                 return {"Authorization": f"Bearer {session.access_token}"}
         except CredentialStoreUnavailableError:
-            pass
+            return {}
+        return {}
+
+    def _api_key_headers() -> dict[str, str]:
         try:
             api_key, _source = store.get_api_key(tool_name)  # type: ignore[arg-type]
             if api_key:
                 return {"X-API-Key": api_key}
         except CredentialStoreUnavailableError:
-            pass
+            return {}
+        return {}
+
+    resolvers = {
+        "oauth": _oauth_headers,
+        "api-key": _api_key_headers,
+    }
+
+    for credential_kind in _tool_auth_precedence(tool_name):
+        headers = resolvers[credential_kind]()
+        if headers:
+            return headers
+    return {}
+
+
+def _get_auth_headers(config, tool_name: str | None = None) -> dict[str, str]:  # noqa: ANN001
+    """Build auth headers from stored credentials.
+
+    If a tool is provided, use only that tool's credentials.
+    Otherwise, require the credential set to be unambiguous.
+    """
+    if tool_name:
+        return _auth_headers_for_tool(config, tool_name)
+
+    matches: list[dict[str, str]] = []
+    matched_tools: list[str] = []
+    for candidate in _SUPPORTED_TOOLS:
+        headers = _auth_headers_for_tool(config, candidate)
+        if headers:
+            matches.append(headers)
+            matched_tools.append(candidate)
+
+    if len(matches) > 1:
+        raise AmbiguousMemoryAuthSelectionError(tuple(matched_tools))
+
+    if matches:
+        return matches[0]
+
     return {}
 
 
@@ -103,28 +154,55 @@ def search(
         "naya", "--context", "-c", help="Context scope (naya, personal, es)"
     ),
     store: str = typer.Option(
-        "semantic", "--store", "-s", help="Store to search (semantic, episodic, all)"
+        "semantic",
+        "--store",
+        "-s",
+        help="Store to search (semantic, episodic, preference, all)",
+    ),
+    tool: str | None = typer.Option(
+        None,
+        "--tool",
+        help="Credential source to use when multiple Eve client logins are configured (claude-code, gemini-cli, codex-cli)",
     ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Search memories via the Eve REST API."""
     _VALID_CONTEXTS = {"naya", "personal", "es"}
-    _VALID_STORES = {"semantic", "episodic", "all"}
+    _VALID_STORES = {"semantic", "episodic", "preference", "all"}
+    _VALID_TOOLS = set(_SUPPORTED_TOOLS)
     if context.lower() not in _VALID_CONTEXTS:
         raise typer.BadParameter(f"context must be one of {_VALID_CONTEXTS}, got '{context}'")
     if store.lower() not in _VALID_STORES:
         raise typer.BadParameter(f"store must be one of {_VALID_STORES}, got '{store}'")
+    if tool and tool.lower() not in _VALID_TOOLS:
+        raise typer.BadParameter(f"tool must be one of {_VALID_TOOLS}, got '{tool}'")
+    context = context.upper()
+    store = store.lower()
+    tool = tool.lower() if tool else None
     config = resolve_config()
-    auth_headers = _get_auth_headers(config)
+    try:
+        auth_headers = _get_auth_headers(config, tool)
+    except AmbiguousMemoryAuthSelectionError as exc:
+        joined_tools = ", ".join(exc.tools)
+        console.print(
+            "[yellow]Multiple stored credentials found for "
+            f"{joined_tools}. Re-run with `--tool` to choose one.[/yellow]"
+        )
+        raise typer.Exit(1)
     if not auth_headers:
-        console.print("[yellow]No stored credentials found. Run `eve auth login` first.[/yellow]")
+        if tool:
+            console.print(
+                f"[yellow]No stored credentials found for `{tool}`. Run `eve auth login --tool {tool}` first.[/yellow]"
+            )
+        else:
+            console.print("[yellow]No stored credentials found. Run `eve auth login` first.[/yellow]")
         raise typer.Exit(1)
 
     url = _api_base_url(config) + _SEARCH_PATH
     payload = {
         "query": query,
         "limit": limit,
-        "context": context.upper(),
+        "context": context,
         "store": store,
     }
     headers = {
@@ -185,6 +263,11 @@ def search(
 
 @memory_app.command()
 def status(
+    tool: str | None = typer.Option(
+        None,
+        "--tool",
+        help="Credential source to use when multiple Eve client logins are configured (claude-code, gemini-cli, codex-cli)",
+    ),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ) -> None:
     """Show memory service health and status."""
@@ -193,7 +276,19 @@ def status(
     headers = {"Accept": "application/json"}
 
     # Health endpoint is typically unauthenticated, but include auth if available
-    auth_headers = _get_auth_headers(config)
+    tool = tool.lower() if tool else None
+    if tool and tool not in _SUPPORTED_TOOLS:
+        raise typer.BadParameter(f"tool must be one of {set(_SUPPORTED_TOOLS)}, got '{tool}'")
+    try:
+        auth_headers = _get_auth_headers(config, tool)
+    except AmbiguousMemoryAuthSelectionError as exc:
+        joined_tools = ", ".join(exc.tools)
+        console.print(
+            "[yellow]Multiple stored credentials found for "
+            f"{joined_tools}. Continuing with an unauthenticated health request. "
+            "Re-run with `--tool` if you need a specific credential.[/yellow]"
+        )
+        auth_headers = {}
     headers.update(auth_headers)
 
     status_code, data = _http_request(url, headers=headers)
