@@ -1,0 +1,23 @@
+startCommand:
+  type: http
+  configSchema:
+    type: object
+    required:
+      - tenantSlug
+    properties:
+      tenantSlug:
+        type: string
+        title: Tenant Slug
+        description: Your Eve workspace tenant slug (found at evemem.com/app/overview)
+      apiKey:
+        type: string
+        title: API Key
+        description: Your Eve API key (create at evemem.com/app/overview)
+  commandFunction: |
+    (config) => ({
+      url: new URL(`https://mcp.evemem.com/mcp`),
+      headers: {
+        "X-Managed-Tenant-Slug": config.tenantSlug,
+        ...(config.apiKey ? { "Authorization": `Bearer ${config.apiKey}` } : {})
+      }
+    })
