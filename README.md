@@ -99,10 +99,10 @@ Alternative:
 pipx install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
-Bootstrap helper from a clone of this repo:
+Or via the standalone bash installer:
 
 ```bash
-bash scripts/install-eve-client.sh
+curl -fsSL https://raw.githubusercontent.com/sherifkozman/eve-mcp/main/install.sh | bash
 ```
 
 Then confirm:
