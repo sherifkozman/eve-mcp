@@ -317,7 +317,8 @@ Use a tenant API key from the Eve admin panel.
 ```json
 {
   "eve-memory": {
-    "httpUrl": "https://mcp.evemem.com/mcp",
+    "type": "http",
+    "url": "https://mcp.evemem.com/mcp",
     "headers": {
       "X-API-Key": "eve_<tenant>_...",
       "X-Source-Agent": "claude_code"
