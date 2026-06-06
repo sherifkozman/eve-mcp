@@ -16,7 +16,12 @@ from eve_client.importer.models import (
     ImportSourceType,
     ImportTurn,
 )
-from eve_client.importer.upload import ImportUploadError, ImportUploadResult, build_batches_for_job, upload_run
+from eve_client.importer.upload import (
+    ImportUploadError,
+    ImportUploadResult,
+    build_batches_for_job,
+    upload_run,
+)
 
 __all__ = [
     "ImportBatch",

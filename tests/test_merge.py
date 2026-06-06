@@ -102,6 +102,10 @@ def test_companion_content_contains_markers() -> None:
     assert "## Eve Memory Protocol" in content
     assert "### Read discipline" in content
     assert "### Write discipline" in content
+    assert 'memory_search(store="preference")' in content
+    assert 'memory_store(store="preference")' in content
+    assert "Use episodic memory for session, event, or history recall." in content
+    assert "Store stable user, workflow/operating, behavior, or taste preferences in preference memory;" in content
 
 
 def test_merge_companion_file_appends_to_existing_agents_md(tmp_path: Path) -> None:

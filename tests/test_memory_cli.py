@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from eve_client import memory_cli
 from eve_client.cli import app
 from eve_client.config import ResolvedConfig
 from typer.testing import CliRunner
@@ -144,6 +145,39 @@ def _patch_config(tmp_path: Path):
 
 
 class TestMemorySearch:
+    def test_search_accepts_preference_store(self, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+
+        def _urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            captured.update(json.loads(request.data.decode("utf-8")))
+            response = MagicMock()
+            response.status = 200
+            response.__enter__ = lambda s: s
+            response.__exit__ = lambda s, *a: None
+            response.read.return_value = json.dumps({"results": []}).encode("utf-8")
+            return response
+
+        with (
+            _patch_config(tmp_path),
+            _patch_auth_with_api_key(),
+            patch("eve_client.memory_cli.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "memory",
+                    "search",
+                    "which models do I prefer for UI work",
+                    "--store",
+                    "Preference",
+                    "--context",
+                    "personal",
+                ],
+            )
+            assert result.exit_code == 0
+            assert captured["store"] == "preference"
+            assert captured["context"] == "PERSONAL"
+
     def test_search_returns_results(self, tmp_path: Path) -> None:
         with (
             _patch_config(tmp_path),
@@ -223,8 +257,262 @@ class TestMemorySearch:
             assert result.exit_code == 1
             assert "Connection error" in result.stdout
 
+    def test_search_rejects_invalid_store(self, tmp_path: Path) -> None:
+        with (
+            _patch_config(tmp_path),
+            _patch_auth_with_api_key(),
+        ):
+            result = runner.invoke(app, ["memory", "search", "test", "--store", "graph"])
+            assert result.exit_code == 2
+            assert "Usage: eve memory search" in result.output
+            assert "Error" in result.output
+
+    def test_search_passes_explicit_tool_to_auth_lookup(self, tmp_path: Path) -> None:
+        with (
+            _patch_config(tmp_path),
+            patch("eve_client.memory_cli._get_auth_headers", return_value={"X-API-Key": "x"}) as auth_mock,
+            patch(
+                "eve_client.memory_cli.urllib.request.urlopen",
+                side_effect=_mock_urlopen(200, {"results": []}),
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["memory", "search", "what tone do I like", "--store", "preference", "--tool", "codex-cli"],
+            )
+            assert result.exit_code == 0
+            auth_mock.assert_called_once()
+            args, _kwargs = auth_mock.call_args
+            assert args[1] == "codex-cli"
+
+    def test_search_uses_oauth_header_for_codex_tool(self, tmp_path: Path) -> None:
+        captured_headers: dict[str, str] = {}
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, tool_name):  # noqa: ANN001
+                if tool_name == "codex-cli":
+                    return MagicMock(access_token="oauth-token", expires_at=None), "keyring"
+                return None, None
+
+            def get_api_key(self, _tool_name):  # noqa: ANN001
+                return None, None
+
+        def _urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            captured_headers.update({key.lower(): value for key, value in request.header_items()})
+            response = MagicMock()
+            response.status = 200
+            response.__enter__ = lambda s: s
+            response.__exit__ = lambda s, *a: None
+            response.read.return_value = json.dumps({"results": []}).encode("utf-8")
+            return response
+
+        with (
+            _patch_config(tmp_path),
+            patch("eve_client.memory_cli.LocalCredentialStore", _Store),
+            patch("eve_client.memory_cli.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            result = runner.invoke(
+                app,
+                ["memory", "search", "what do I prefer", "--store", "preference", "--tool", "codex-cli"],
+            )
+            assert result.exit_code == 0
+            assert captured_headers["authorization"] == "Bearer oauth-token"
+
+    def test_search_uses_api_key_header_for_claude_tool(self, tmp_path: Path) -> None:
+        captured_headers: dict[str, str] = {}
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, _tool_name):  # noqa: ANN001
+                return None, None
+
+            def get_api_key(self, tool_name):  # noqa: ANN001
+                if tool_name == "claude-code":
+                    return "claude-api-key", "keyring"
+                return None, None
+
+        def _urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            captured_headers.update({key.lower(): value for key, value in request.header_items()})
+            response = MagicMock()
+            response.status = 200
+            response.__enter__ = lambda s: s
+            response.__exit__ = lambda s, *a: None
+            response.read.return_value = json.dumps({"results": []}).encode("utf-8")
+            return response
+
+        with (
+            _patch_config(tmp_path),
+            patch("eve_client.memory_cli.LocalCredentialStore", _Store),
+            patch("eve_client.memory_cli.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            result = runner.invoke(
+                app,
+                ["memory", "search", "what tone do I like", "--store", "preference", "--tool", "claude-code"],
+            )
+            assert result.exit_code == 0
+            assert captured_headers["x-api-key"] == "claude-api-key"
+
+    def test_search_exits_when_credentials_are_ambiguous(self, tmp_path: Path) -> None:
+        with (
+            _patch_config(tmp_path),
+            patch(
+                "eve_client.memory_cli._get_auth_headers",
+                side_effect=memory_cli.AmbiguousMemoryAuthSelectionError(("claude-code", "codex-cli")),
+            ),
+        ):
+            result = runner.invoke(app, ["memory", "search", "what tone do I like"])
+            assert result.exit_code == 1
+            assert "Multiple stored credentials found" in result.output
+            assert "--tool" in result.output
+
+    def test_get_auth_headers_rejects_ambiguous_automatic_selection(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, tool_name):  # noqa: ANN001
+                if tool_name == "claude-code":
+                    return MagicMock(access_token="claude-token", expires_at=None), "keyring"
+                return None, None
+
+            def get_api_key(self, tool_name):  # noqa: ANN001
+                if tool_name == "codex-cli":
+                    return "codex-key", "keyring"
+                return None, None
+
+        with patch("eve_client.memory_cli.LocalCredentialStore", _Store):
+            with pytest.raises(memory_cli.AmbiguousMemoryAuthSelectionError) as exc:
+                memory_cli._get_auth_headers(config)
+            assert exc.value.tools == ("claude-code", "codex-cli")
+
+    def test_get_auth_headers_uses_requested_tool_only(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, tool_name):  # noqa: ANN001
+                if tool_name == "claude-code":
+                    return MagicMock(access_token="claude-token", expires_at=None), "keyring"
+                return None, None
+
+            def get_api_key(self, tool_name):  # noqa: ANN001
+                if tool_name == "codex-cli":
+                    return "codex-key", "keyring"
+                return None, None
+
+        with patch("eve_client.memory_cli.LocalCredentialStore", _Store):
+            assert memory_cli._get_auth_headers(config, "codex-cli") == {"X-API-Key": "codex-key"}
+
+    def test_get_auth_headers_prefers_api_key_for_claude_code(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, _tool_name):  # noqa: ANN001
+                return MagicMock(access_token="oauth-token", expires_at=None), "keyring"
+
+            def get_api_key(self, _tool_name):  # noqa: ANN001
+                return "api-key", "keyring"
+
+        with patch("eve_client.memory_cli.LocalCredentialStore", _Store):
+            assert memory_cli._get_auth_headers(config, "claude-code") == {"X-API-Key": "api-key"}
+
+    def test_get_auth_headers_prefers_oauth_for_codex(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, _tool_name):  # noqa: ANN001
+                return MagicMock(access_token="oauth-token", expires_at=None), "keyring"
+
+            def get_api_key(self, _tool_name):  # noqa: ANN001
+                return "api-key", "keyring"
+
+        with patch("eve_client.memory_cli.LocalCredentialStore", _Store):
+            assert memory_cli._get_auth_headers(config, "codex-cli") == {
+                "Authorization": "Bearer oauth-token"
+            }
+
+    def test_status_continues_unauthenticated_when_credentials_are_ambiguous(
+        self, tmp_path: Path
+    ) -> None:
+        with (
+            _patch_config(tmp_path),
+            patch(
+                "eve_client.memory_cli._get_auth_headers",
+                side_effect=memory_cli.AmbiguousMemoryAuthSelectionError(("claude-code", "codex-cli")),
+            ),
+            patch(
+                "eve_client.memory_cli.urllib.request.urlopen",
+                side_effect=_mock_urlopen(200, _HEALTH_OK),
+            ),
+        ):
+            result = runner.invoke(app, ["memory", "status"])
+            assert result.exit_code == 0
+            assert "unauthenticated health request" in result.output
+
 
 class TestMemoryStatus:
+    def test_status_with_explicit_tool_uses_auth_headers(self, tmp_path: Path) -> None:
+        captured_headers: dict[str, str] = {}
+
+        class _Store:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def get_oauth_session(self, tool_name):  # noqa: ANN001
+                if tool_name == "codex-cli":
+                    return MagicMock(access_token="oauth-token", expires_at=None), "keyring"
+                return None, None
+
+            def get_api_key(self, _tool_name):  # noqa: ANN001
+                return None, None
+
+        def _urlopen(request, timeout=None):  # noqa: ANN001, ARG001
+            captured_headers.update(dict(request.header_items()))
+            response = MagicMock()
+            response.status = 200
+            response.__enter__ = lambda s: s
+            response.__exit__ = lambda s, *a: None
+            response.read.return_value = json.dumps(_HEALTH_OK).encode("utf-8")
+            return response
+
+        with (
+            _patch_config(tmp_path),
+            patch("eve_client.memory_cli.LocalCredentialStore", _Store),
+            patch("eve_client.memory_cli.urllib.request.urlopen", side_effect=_urlopen),
+        ):
+            result = runner.invoke(app, ["memory", "status", "--tool", "codex-cli"])
+            assert result.exit_code == 0
+            assert captured_headers["Authorization"] == "Bearer oauth-token"
+
+    def test_status_with_explicit_tool_and_no_credentials_still_checks_health(
+        self, tmp_path: Path
+    ) -> None:
+        with (
+            _patch_config(tmp_path),
+            patch("eve_client.memory_cli._get_auth_headers", return_value={}),
+            patch(
+                "eve_client.memory_cli.urllib.request.urlopen",
+                side_effect=_mock_urlopen(200, _HEALTH_OK),
+            ),
+        ):
+            result = runner.invoke(app, ["memory", "status", "--tool", "claude-code"])
+            assert result.exit_code == 0
+
     def test_status_healthy(self, tmp_path: Path) -> None:
         with (
             _patch_config(tmp_path),

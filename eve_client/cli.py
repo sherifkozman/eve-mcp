@@ -44,8 +44,8 @@ from eve_client.lock import (
     installer_lock_is_held,
     read_lock_metadata,
 )
-from eve_client.memory_cli import memory_app
 from eve_client.manifest import ManifestIntegrityError, load_manifest
+from eve_client.memory_cli import memory_app
 from eve_client.oauth_device import (
     OAuthDeviceFlowError,
     poll_auth0_device_token,
