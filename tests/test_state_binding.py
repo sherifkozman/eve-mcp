@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from eve_client.state_binding import (
     StateBindingError,
     clear_installation_id,
