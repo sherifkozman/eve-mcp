@@ -15,18 +15,23 @@ from eve_client.config import (
     resolve_config,
     update_local_config,
 )
+from eve_client.scope import ResolvedScope
 
 
 def test_resolve_config_uses_default(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("EVE_MCP_BASE_URL", raising=False)
+    monkeypatch.delenv("EVE_DEFAULT_VISIBILITY", raising=False)
+    monkeypatch.delenv("EVE_DEFAULT_CONTEXT", raising=False)
+    monkeypatch.delenv("EVE_TENANT_SLUG", raising=False)
     config = resolve_config()
     assert config.mcp_base_url == DEFAULT_MCP_BASE_URL
     assert config.ui_base_url == DEFAULT_UI_BASE_URL
     assert config.environment == "production"
     assert config.mcp_server_name == "eve-memory"
     assert config.allow_file_secret_fallback is False
+    assert config.scope is None
 
 
 def test_resolve_api_base_url_maps_official_mcp_host() -> None:
@@ -61,6 +66,26 @@ def test_resolve_config_honors_local_file(monkeypatch, tmp_path: Path) -> None:
     assert config.codex_source == "config"
     assert config.allow_file_secret_fallback is False
     assert config.project_root == Path.cwd().resolve()
+
+
+def test_resolve_config_includes_project_scope(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    monkeypatch.delenv("EVE_DEFAULT_VISIBILITY", raising=False)
+    monkeypatch.delenv("EVE_DEFAULT_CONTEXT", raising=False)
+    monkeypatch.delenv("EVE_TENANT_SLUG", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "eve.json").write_text(
+        json.dumps({"scope_version": 1, "visibility": "SHARED", "context": "team"}),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project)
+
+    config = resolve_config()
+
+    assert config.scope == ResolvedScope(visibility="SHARED", context="team")
 
 
 def test_resolve_config_honors_legacy_feature_codex_cli_key(monkeypatch, tmp_path: Path) -> None:

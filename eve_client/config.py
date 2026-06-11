@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from eve_client.scope import ResolvedScope, resolve_scope
+
 DEFAULT_MCP_BASE_URL = "https://mcp.evemem.com/mcp"
 DEFAULT_API_BASE_URL = "https://api.evemem.com"
 DEFAULT_UI_BASE_URL = "https://evemem.com"
@@ -93,6 +95,7 @@ class ResolvedConfig:
     blocked_ui_base_url: str | None = None
     oauth_domain: str = DEFAULT_OAUTH_DOMAIN
     oauth_client_id: str = DEFAULT_OAUTH_CLIENT_ID
+    scope: ResolvedScope | None = None
 
 
 def _darwin_native_dir() -> Path:
@@ -268,6 +271,7 @@ def _resolved_ui_base_url(value: str) -> tuple[str, str | None]:
 
 def resolve_config(override_mcp_base_url: str | None = None) -> ResolvedConfig:
     local_config = load_local_config()
+    project_root = Path.cwd().resolve()
     mcp_base_url = _validated_mcp_base_url(
         override_mcp_base_url
         or os.environ.get(CONFIG_ENV_VAR)
@@ -289,7 +293,7 @@ def resolve_config(override_mcp_base_url: str | None = None) -> ResolvedConfig:
         config_dir=get_config_dir(),
         config_path=get_config_path(),
         state_dir=get_state_dir(),
-        project_root=Path.cwd().resolve(),
+        project_root=project_root,
         mcp_base_url=mcp_base_url,
         ui_base_url=ui_base_url,
         mcp_server_name=MCP_SERVER_NAME,
@@ -303,6 +307,9 @@ def resolve_config(override_mcp_base_url: str | None = None) -> ResolvedConfig:
         or DEFAULT_OAUTH_DOMAIN,
         oauth_client_id=(os.environ.get(OAUTH_CLIENT_ID_ENV_VAR) or DEFAULT_OAUTH_CLIENT_ID).strip()
         or DEFAULT_OAUTH_CLIENT_ID,
+        # Advisory discovery only. PACK-07 owns trust confirmation before this
+        # can drive SHARED/team write behavior.
+        scope=resolve_scope(project_root),
     )
 
 
