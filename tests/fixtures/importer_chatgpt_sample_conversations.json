@@ -1,0 +1,34 @@
+[
+  {
+    "id": "chatgpt-conversation-1",
+    "title": "Launch notes",
+    "current_node": "assistant-1",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "parent": null,
+        "message": null
+      },
+      "user-1": {
+        "id": "user-1",
+        "parent": "root",
+        "message": {
+          "id": "msg-user-1",
+          "create_time": 1780000000.0,
+          "author": {"role": "user", "metadata": {}},
+          "content": {"content_type": "text", "parts": ["Remember that I prefer import dry-runs first."]}
+        }
+      },
+      "assistant-1": {
+        "id": "assistant-1",
+        "parent": "user-1",
+        "message": {
+          "id": "msg-assistant-1",
+          "create_time": 1780000005.0,
+          "author": {"role": "assistant", "metadata": {"model_slug": "gpt-4o"}},
+          "content": {"content_type": "text", "parts": ["I will preview importer results before upload."]}
+        }
+      }
+    }
+  }
+]

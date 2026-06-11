@@ -43,6 +43,28 @@ def _write_claude_fixture(tmp_path: Path) -> Path:
     return target
 
 
+def _write_chatgpt_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "chatgpt"
+    root.mkdir(parents=True)
+    target = root / "conversations.json"
+    target.write_text(
+        (FIXTURES / "importer_chatgpt_sample_conversations.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return target
+
+
+def _write_claude_desktop_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "claude-desktop"
+    root.mkdir(parents=True)
+    target = root / "claude_ai_conversations.json"
+    target.write_text(
+        (FIXTURES / "importer_claude_desktop_sample.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return target
+
+
 def test_import_scan_json_creates_ledger_job(monkeypatch, tmp_path: Path) -> None:
     target = _write_codex_fixture(tmp_path)
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
@@ -176,6 +198,146 @@ def test_import_preview_json_supports_claude_code(monkeypatch, tmp_path: Path) -
     assert payload["candidate"]["source_type"] == "claude-code"
     assert payload["turns"][0]["role"] == "user"
     assert payload["turns"][1]["role"] == "assistant"
+
+
+@pytest.mark.parametrize(
+    ("source_type", "writer", "expected_session"),
+    [
+        ("chatgpt", _write_chatgpt_fixture, "chatgpt-conversation-1"),
+        ("claude-desktop", _write_claude_desktop_fixture, "claude-desktop-conversation-1"),
+    ],
+)
+def test_import_scan_json_supports_new_export_sources(
+    monkeypatch,
+    tmp_path: Path,
+    source_type: str,
+    writer,
+    expected_session: str,
+) -> None:
+    target = writer(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "scan",
+            "--source",
+            source_type,
+            "--root",
+            str(target.parent),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidate_count"] == 1
+    assert payload["candidates"][0]["source_type"] == source_type
+    assert payload["candidates"][0]["session_id"] == expected_session
+    assert payload["job"]["source_type"] == source_type
+
+
+@pytest.mark.parametrize(
+    ("source_type", "writer"),
+    [
+        ("chatgpt", _write_chatgpt_fixture),
+        ("claude-desktop", _write_claude_desktop_fixture),
+    ],
+)
+def test_import_preview_json_supports_new_export_sources(
+    monkeypatch,
+    tmp_path: Path,
+    source_type: str,
+    writer,
+) -> None:
+    target = writer(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "preview",
+            "--source",
+            source_type,
+            "--path",
+            str(target),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["turn_count"] == 2
+    assert payload["candidate"]["source_type"] == source_type
+    assert payload["turns"][0]["role"] == "user"
+    assert payload["turns"][1]["role"] == "assistant"
+
+
+def test_import_preview_uses_exact_path_without_recursive_discovery(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    source_path = tmp_path / "conversations.json"
+    source_path.write_text("[]", encoding="utf-8")
+
+    @dataclass
+    class _Candidate:
+        source_type: str
+        session_id: str
+        path: Path
+
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "source_type": self.source_type,
+                "session_id": self.session_id,
+                "path": str(self.path),
+            }
+
+    class _Turn:
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "role": "user",
+                "content": "Preview exact file only.",
+                "source_system": "chatgpt",
+            }
+
+    class _Adapter:
+        def candidate_for_path(self, path: Path):
+            return _Candidate("chatgpt", "exact-session", path)
+
+        def discover(self, roots):  # noqa: ANN001
+            raise AssertionError("preview must not recursively discover parent directories")
+
+        def parse(self, candidate):  # noqa: ANN001
+            return [_Turn()]
+
+    monkeypatch.setattr("eve_client.cli.get_import_adapter", lambda _source: _Adapter())
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "preview",
+            "--source",
+            "chatgpt",
+            "--path",
+            str(source_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidate"]["session_id"] == "exact-session"
+    assert payload["turn_count"] == 1
 
 
 def test_import_jobs_lists_created_jobs(monkeypatch, tmp_path: Path) -> None:
@@ -699,6 +861,30 @@ def test_import_preview_missing_path_returns_nonzero(monkeypatch, tmp_path: Path
     assert "No supported codex-cli source found" in result.stderr
 
 
+def test_import_preview_directory_path_returns_clean_error(monkeypatch, tmp_path: Path) -> None:
+    source_dir = tmp_path / "source-dir"
+    source_dir.mkdir()
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "preview",
+            "--source",
+            "chatgpt",
+            "--path",
+            str(source_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "No supported chatgpt source found" in result.stderr
+
+
 def test_import_preview_parse_error_returns_clean_cli_error(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -722,8 +908,8 @@ def test_import_preview_parse_error_returns_clean_cli_error(
             }
 
     class _Adapter:
-        def discover(self, roots):
-            return [_Candidate("codex-cli", "broken-session", source_path)]
+        def candidate_for_path(self, path: Path):
+            return _Candidate("codex-cli", "broken-session", path)
 
         def parse(self, candidate):
             raise ValueError("malformed payload")
@@ -764,3 +950,44 @@ def test_import_scan_root_requires_source(monkeypatch, tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "--root requires --source" in result.stderr
+
+
+@pytest.mark.parametrize("source_type", ["chatgpt", "claude-desktop"])
+def test_import_scan_broad_export_sources_require_explicit_root(
+    monkeypatch, tmp_path: Path, source_type: str
+) -> None:
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(app, ["import", "scan", "--source", source_type, "--json"])
+
+    assert result.exit_code != 0
+    assert f"--source {source_type} requires --root" in result.stderr
+
+
+def test_import_scan_without_source_does_not_scan_broad_export_roots(
+    monkeypatch, tmp_path: Path
+) -> None:
+    downloads = tmp_path / "Downloads"
+    desktop = tmp_path / "Desktop"
+    downloads.mkdir()
+    desktop.mkdir()
+    (downloads / "conversations.json").write_text(
+        (FIXTURES / "importer_chatgpt_sample_conversations.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (desktop / "claude_ai_conversations.json").write_text(
+        (FIXTURES / "importer_claude_desktop_sample.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setattr("eve_client.importer.adapters.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+
+    result = runner.invoke(app, ["import", "scan", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["candidate_count"] == 0

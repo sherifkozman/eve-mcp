@@ -1,0 +1,22 @@
+{
+  "conversations": [
+    {
+      "uuid": "claude-desktop-conversation-1",
+      "name": "Desktop import",
+      "chat_messages": [
+        {
+          "uuid": "desktop-user-1",
+          "sender": "human",
+          "text": "Remember that Claude Desktop imports should be resumable.",
+          "created_at": "2026-06-10T12:00:00Z"
+        },
+        {
+          "uuid": "desktop-assistant-1",
+          "sender": "assistant",
+          "text": "I will keep the import batches resumable.",
+          "created_at": "2026-06-10T12:00:05Z"
+        }
+      ]
+    }
+  ]
+}

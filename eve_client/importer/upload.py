@@ -212,7 +212,9 @@ def _slice_turn_groups(
     *,
     run_id: str,
     candidate: ImportCandidate,
+    session_id: str,
     turns: list[ImportTurn],
+    start_offset: int,
     batch_size: int,
     context_mode: str,
     source_priority: int,
@@ -233,7 +235,7 @@ def _slice_turn_groups(
         estimated_bytes = _estimate_request_bytes(
             run_id=run_id,
             source_type=candidate.source_type,
-            session_id=candidate.session_id,
+            session_id=session_id,
             context_mode=context_mode,
             source_priority=source_priority,
             min_importance=min_importance,
@@ -246,18 +248,18 @@ def _slice_turn_groups(
                     "Importer source contains a single turn that exceeds the maximum upload batch size."
                 )
             current_chunk = next_chunk
-            current_chunk_offset = current_offset
+            current_chunk_offset = start_offset + current_offset
             current_offset = index + 1
             continue
         if len(next_chunk) > max_turns_per_batch or estimated_bytes > target_request_bytes:
             turn_groups.append((current_chunk_offset, current_chunk))
             current_chunk = [turn]
-            current_chunk_offset = index
+            current_chunk_offset = start_offset + index
             current_offset = index + 1
             single_bytes = _estimate_request_bytes(
                 run_id=run_id,
                 source_type=candidate.source_type,
-                session_id=candidate.session_id,
+                session_id=session_id,
                 context_mode=context_mode,
                 source_priority=source_priority,
                 min_importance=min_importance,
@@ -274,6 +276,26 @@ def _slice_turn_groups(
     if current_chunk:
         turn_groups.append((current_chunk_offset, current_chunk))
     return turn_groups
+
+
+def _iter_session_turn_ranges(
+    turns: list[ImportTurn], *, default_session_id: str
+) -> list[tuple[str, int, list[ImportTurn]]]:
+    ranges: list[tuple[str, int, list[ImportTurn]]] = []
+    current_session_id: str | None = None
+    current_offset = 0
+    current_turns: list[ImportTurn] = []
+    for index, turn in enumerate(turns):
+        session_id = getattr(turn, "session_id", None) or default_session_id
+        if current_turns and session_id != current_session_id:
+            ranges.append((current_session_id or default_session_id, current_offset, current_turns))
+            current_turns = []
+            current_offset = index
+        current_session_id = session_id
+        current_turns.append(turn)
+    if current_turns:
+        ranges.append((current_session_id or default_session_id, current_offset, current_turns))
+    return ranges
 
 
 def _is_retryable_transport_error(exc: ImportUploadError) -> bool:
@@ -532,45 +554,50 @@ def build_batches_for_job(
             raise ImportUploadError(
                 f"Failed to parse importer source {candidate.path}: {_sanitize_error(exc)}"
             ) from exc
-        turn_groups = _slice_turn_groups(
-            run_id=run_id,
-            candidate=candidate,
-            turns=turns,
-            batch_size=batch_size,
-            context_mode=context_mode,
-            source_priority=source_priority,
-            min_importance=min_importance,
-        )
-        for turn_offset, chunk in turn_groups:
-            batch_id = f"batch_{uuid.uuid4().hex}"
-            request_payload = _batch_payload(
-                batch_id=batch_id,
+        for session_id, start_offset, session_turns in _iter_session_turn_ranges(
+            turns, default_session_id=candidate.session_id
+        ):
+            turn_groups = _slice_turn_groups(
                 run_id=run_id,
-                source_type=candidate.source_type,
-                session_id=candidate.session_id,
-                turn_offset=turn_offset,
-                turn_count=len(chunk),
+                candidate=candidate,
+                session_id=session_id,
+                turns=session_turns,
+                start_offset=start_offset,
+                batch_size=batch_size,
                 context_mode=context_mode,
                 source_priority=source_priority,
                 min_importance=min_importance,
-                candidate=candidate,
-                turns=chunk,
             )
-            batches.append(
-                ImportBatch(
-                    run_id="",
+            for turn_offset, chunk in turn_groups:
+                batch_id = f"batch_{uuid.uuid4().hex}"
+                request_payload = _batch_payload(
                     batch_id=batch_id,
-                    batch_index=batch_index,
-                    candidate_path=candidate.path,
+                    run_id=run_id,
                     source_type=candidate.source_type,
-                    session_id=candidate.session_id,
+                    session_id=session_id,
                     turn_offset=turn_offset,
                     turn_count=len(chunk),
-                    status="pending",
-                    request_payload=request_payload,
+                    context_mode=context_mode,
+                    source_priority=source_priority,
+                    min_importance=min_importance,
+                    candidate=candidate,
+                    turns=chunk,
                 )
-            )
-            batch_index += 1
+                batches.append(
+                    ImportBatch(
+                        run_id="",
+                        batch_id=batch_id,
+                        batch_index=batch_index,
+                        candidate_path=candidate.path,
+                        source_type=candidate.source_type,
+                        session_id=session_id,
+                        turn_offset=turn_offset,
+                        turn_count=len(chunk),
+                        status="pending",
+                        request_payload=request_payload,
+                    )
+                )
+                batch_index += 1
     if not batches:
         raise ImportUploadError(
             "Importer scan job produced no uploadable turns. Check the selected source files."

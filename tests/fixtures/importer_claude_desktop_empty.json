@@ -1,0 +1,9 @@
+{
+  "conversations": [
+    {
+      "uuid": "claude-desktop-empty",
+      "name": "Empty",
+      "chat_messages": []
+    }
+  ]
+}

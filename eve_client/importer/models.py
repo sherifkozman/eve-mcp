@@ -7,7 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-ImportSourceType = Literal["claude-code", "codex-cli", "gemini-cli"]
+ImportSourceType = Literal[
+    "claude-code",
+    "codex-cli",
+    "gemini-cli",
+    "chatgpt",
+    "claude-desktop",
+]
 
 
 @dataclass(slots=True)

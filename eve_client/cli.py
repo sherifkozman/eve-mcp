@@ -44,8 +44,8 @@ from eve_client.lock import (
     installer_lock_is_held,
     read_lock_metadata,
 )
-from eve_client.memory_cli import memory_app
 from eve_client.manifest import ManifestIntegrityError, load_manifest
+from eve_client.memory_cli import memory_app
 from eve_client.oauth_device import (
     OAuthDeviceFlowError,
     poll_auth0_device_token,
@@ -109,9 +109,17 @@ def _parse_tools(raw_tools: list[str] | None) -> list[str] | None:
 
 def _normalize_import_source(value: str) -> ImportSourceType:
     normalized = value.strip().lower()
-    if normalized not in {"claude-code", "codex-cli", "gemini-cli"}:
-        raise typer.BadParameter("--source must be 'claude-code', 'codex-cli', or 'gemini-cli'")
+    if normalized not in {"claude-code", "codex-cli", "gemini-cli", "chatgpt", "claude-desktop"}:
+        raise typer.BadParameter(
+            "--source must be 'claude-code', 'codex-cli', 'gemini-cli', "
+            "'chatgpt', or 'claude-desktop'"
+        )
     return normalized  # type: ignore[return-value]
+
+
+_BROAD_IMPORT_SOURCE_TYPES: frozenset[ImportSourceType] = frozenset(
+    {"chatgpt", "claude-desktop"}
+)
 
 
 def _normalize_import_auth_mode(value: str) -> str:
@@ -692,6 +700,8 @@ def import_scan(
         if source_type is None:
             raise typer.BadParameter("--root requires --source")
         roots_by_source[source_type] = [root.expanduser().resolve()]
+    elif source_type in _BROAD_IMPORT_SOURCE_TYPES:
+        raise typer.BadParameter(f"--source {source_type} requires --root")
     candidates = scan_candidates(
         source_types=[source_type] if source_type else None,
         roots_by_source=roots_by_source,
@@ -740,14 +750,8 @@ def import_preview(
     """Preview normalized turns from a local source artifact."""
     source_type = _normalize_import_source(source)
     adapter = get_import_adapter(source_type)
-    candidate = next(
-        (
-            item
-            for item in adapter.discover(roots=[path.expanduser().resolve().parent])
-            if item.path == path.expanduser().resolve()
-        ),
-        None,
-    )
+    resolved_path = path.expanduser().resolve()
+    candidate = adapter.candidate_for_path(resolved_path)
     if candidate is None:
         raise typer.BadParameter(f"No supported {source_type} source found at {path}")
     try:

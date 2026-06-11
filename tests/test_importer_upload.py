@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from eve_client.config import ResolvedConfig
+from eve_client.importer.adapters import scan_candidates
 from eve_client.importer.ledger import ImportLedger
 from eve_client.importer.models import ImportCandidate
 from eve_client.importer.upload import (
@@ -74,6 +75,167 @@ def _seed_job(tmp_path: Path) -> tuple[ImportLedger, object]:
         ],
     )
     return ledger, job
+
+
+@pytest.mark.parametrize(
+    ("source_type", "fixture_name", "file_name"),
+    [
+        ("chatgpt", "importer_chatgpt_sample_conversations.json", "conversations.json"),
+        ("claude-desktop", "importer_claude_desktop_sample.json", "claude_ai_conversations.json"),
+    ],
+)
+def test_upload_run_materializes_new_export_sources_without_path_metadata(
+    monkeypatch,
+    tmp_path: Path,
+    source_type: str,
+    fixture_name: str,
+    file_name: str,
+) -> None:
+    fixture = Path(__file__).parent / "fixtures" / fixture_name
+    root = tmp_path / source_type
+    root.mkdir(parents=True)
+    target = root / file_name
+    target.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+    candidates = scan_candidates(
+        source_types=[source_type],  # type: ignore[list-item]
+        roots_by_source={source_type: [root]},  # type: ignore[dict-item]
+    )
+    ledger = ImportLedger(tmp_path / "state" / "importer.sqlite3")
+    job = ledger.create_scan_job(
+        source_type=source_type,  # type: ignore[arg-type]
+        root_path=root,
+        candidates=candidates,
+    )
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=3,
+        min_importance=5,
+    )
+    stored_batch = ledger.get_run_batches(run.run_id)[0]
+    assert stored_batch.source_type == source_type
+    assert stored_batch.request_payload["source_system"] == source_type
+    assert stored_batch.request_payload["candidate"]["source_type"] == source_type
+    request_payloads: list[dict[str, object]] = []
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        payload = kwargs["payload"]
+        request_payloads.append(payload)
+        return 200, {
+            "status": "completed",
+            "idempotency_key": payload["idempotency_key"],
+            "extracted_count": 2,
+            "stored_count": 2,
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1", "c2"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "completed"
+    assert len(request_payloads) == 1
+    payload = request_payloads[0]
+    assert payload["source_system"] == source_type
+    assert payload["session_id"] == candidates[0].session_id
+    assert payload["source_priority"] == 3
+    assert payload["min_importance"] == 5
+    assert payload["idempotency_key"] == stored_batch.batch_id
+    turns = payload["turns"]
+    assert isinstance(turns, list)
+    assert len(turns) == 2
+    assert {turn["source_system"] for turn in turns if isinstance(turn, dict)} == {source_type}
+    assert "path" not in json.dumps([turn.get("metadata") for turn in turns if isinstance(turn, dict)])
+    assert str(root) not in json.dumps(turns)
+
+
+def test_upload_run_preserves_chatgpt_conversation_session_boundaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source_payload = json.loads(
+        (Path(__file__).parent / "fixtures" / "importer_chatgpt_sample_conversations.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    second_conversation = json.loads(json.dumps(source_payload[0]))
+    second_conversation["id"] = "chatgpt-conversation-2"
+    second_conversation["title"] = "Second launch notes"
+    second_conversation["mapping"]["user-1"]["message"]["content"]["parts"] = [
+        "Keep this second conversation separate."
+    ]
+    second_conversation["mapping"]["assistant-1"]["message"]["content"]["parts"] = [
+        "I will preserve its session id."
+    ]
+    root = tmp_path / "chatgpt"
+    root.mkdir(parents=True)
+    target = root / "conversations.json"
+    target.write_text(json.dumps([source_payload[0], second_conversation]), encoding="utf-8")
+    candidates = scan_candidates(
+        source_types=["chatgpt"],  # type: ignore[list-item]
+        roots_by_source={"chatgpt": [root]},  # type: ignore[dict-item]
+    )
+    ledger = ImportLedger(tmp_path / "state" / "importer.sqlite3")
+    job = ledger.create_scan_job(
+        source_type="chatgpt",
+        root_path=root,
+        candidates=candidates,
+    )
+    assert job is not None
+    run, _ = build_batches_for_job(
+        job=job,
+        ledger=ledger,
+        batch_size=10,
+        auth_source_tool="codex-cli",
+        auth_mode="oauth",
+        context_mode="PERSONAL",
+        source_priority=3,
+        min_importance=5,
+    )
+    request_payloads: list[dict[str, object]] = []
+
+    def _request_batch(**kwargs):  # noqa: ANN003
+        payload = kwargs["payload"]
+        request_payloads.append(payload)
+        return 200, {
+            "status": "completed",
+            "idempotency_key": payload["idempotency_key"],
+            "extracted_count": len(payload["turns"]),
+            "stored_count": len(payload["turns"]),
+            "error_count": 0,
+            "duplicate": False,
+            "result_summary": {"chunk_ids": ["c1"]},
+        }
+
+    monkeypatch.setattr("eve_client.importer.upload._request_batch", _request_batch)
+
+    result = upload_run(
+        config=_config(tmp_path),
+        ledger=ledger,
+        credential_store=_FakeCredentialStore(bearer_token="bearer-token"),
+        run=run,
+    )
+
+    assert result.run.status == "completed"
+    assert [payload["session_id"] for payload in request_payloads] == [
+        "chatgpt-conversation-1",
+        "chatgpt-conversation-2",
+    ]
+    assert [
+        {turn["session_id"] for turn in payload["turns"] if isinstance(turn, dict)}
+        for payload in request_payloads
+    ] == [{"chatgpt-conversation-1"}, {"chatgpt-conversation-2"}]
 
 
 def test_build_batches_for_job_uses_run_id_as_import_job_id(tmp_path: Path) -> None:
