@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -23,10 +24,18 @@ from eve_client.config import resolve_api_base_url, resolve_config
 from eve_client.merge import source_agent_header
 
 _MAX_TRANSCRIPT_BYTES = 800_000
+API_KEY_401_HELP = "Your Eve API key may be invalid or expired; run `eve connect` to refresh it."
+_TOKEN_LIKE_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
 
 
 def _log(message: str) -> None:
     print(f"[eve-client:claude-hooks] {message}", file=sys.stderr)
+
+
+def _sanitize_http_error_reason(reason: object) -> str:
+    text = _CONTROL_CHARS_RE.sub(" ", str(reason))
+    return _TOKEN_LIKE_RE.sub("****", text)
 
 
 def _safe_exit() -> None:
@@ -58,9 +67,13 @@ class _MemoryClient:
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 return True, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            _log(f"HTTP {exc.code} from {path}: {exc.reason}")
+            reason = _sanitize_http_error_reason(exc.reason)
+            if exc.code == 401:
+                _log(f"HTTP 401 from {path}: {reason}. {API_KEY_401_HELP}")
+            else:
+                _log(f"HTTP {exc.code} from {path}: {reason}")
         except Exception as exc:  # noqa: BLE001
-            _log(f"Request to {path} failed: {exc}")
+            _log(f"Request to {path} failed: {_sanitize_http_error_reason(exc)}")
         return False, None
 
     def session_start(

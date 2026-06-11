@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import urllib.error
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,6 +132,57 @@ def test_prompt_enrich_emits_relevant_memories(tmp_path: Path, monkeypatch, caps
     payload = json.loads(output)
     assert payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
     assert "Rollback must fail closed" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_memory_client_401_prints_key_rotation_help(capsys) -> None:
+    client = claude_hooks._MemoryClient(base_url="https://mcp.evemem.com/mcp", api_key="eve-secret")
+    error = urllib.error.HTTPError("https://mcp.evemem.com/memory/search", 401, "Unauthorized", {}, BytesIO())
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=error):
+        ok, payload = client.search(query="prior decision")
+
+    assert ok is False
+    assert payload is None
+    error_output = capsys.readouterr().err
+    assert "HTTP 401 from /memory/search: Unauthorized" in error_output
+    assert claude_hooks.API_KEY_401_HELP in error_output
+
+
+def test_memory_client_401_sanitizes_error_reason(capsys) -> None:
+    client = claude_hooks._MemoryClient(base_url="https://mcp.evemem.com/mcp", api_key="eve-secret")
+    leaked_token = "abcdEFGH1234567890zyxwvu"
+    error = urllib.error.HTTPError(
+        "https://mcp.evemem.com/memory/search",
+        401,
+        f"Unauthorized {leaked_token}\nsecond-line",
+        {},
+        BytesIO(),
+    )
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=error):
+        ok, payload = client.search(query="prior decision")
+
+    assert ok is False
+    assert payload is None
+    error_output = capsys.readouterr().err
+    assert leaked_token not in error_output
+    assert "Unauthorized **** second-line" in error_output
+    assert f"{leaked_token}\nsecond-line" not in error_output
+
+
+def test_memory_client_generic_exception_sanitizes_error_reason(capsys) -> None:
+    client = claude_hooks._MemoryClient(base_url="https://mcp.evemem.com/mcp", api_key="eve-secret")
+    leaked_token = "abcdEFGH1234567890zyxwvu"
+    error = RuntimeError(f"boom {leaked_token}\nsecond-line")
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=error):
+        ok, payload = client.search(query="prior decision")
+
+    assert ok is False
+    assert payload is None
+    error_output = capsys.readouterr().err
+    assert leaked_token not in error_output
+    assert "boom **** second-line" in error_output
 
 
 def test_session_end_reads_transcript_and_calls_extract_and_end(
