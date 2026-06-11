@@ -274,7 +274,7 @@ def test_memory_client_stamps_personal_scope_on_write_payloads() -> None:
         assert "X-managed-tenant-slug" not in headers
 
 
-def test_memory_client_stamps_shared_visibility_without_context_before_trust_gate() -> None:
+def test_memory_client_stamps_shared_advisory_context_without_tenant_header() -> None:
     client = claude_hooks._MemoryClient(
         base_url="https://mcp.evemem.com/mcp",
         api_key="eve-secret",
@@ -291,7 +291,7 @@ def test_memory_client_stamps_shared_visibility_without_context_before_trust_gat
 
     payload, headers = requests[0]
     assert payload["visibility"] == "SHARED"
-    assert "context" not in payload
+    assert payload["context"] == "team_alpha"
     assert "X-managed-tenant-slug" not in headers
 
 

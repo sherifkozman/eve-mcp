@@ -57,9 +57,7 @@ def _scope_payload_fields(scope: ResolvedScope | None) -> dict[str, str]:
     fields: dict[str, str] = {}
     if scope.visibility:
         fields["visibility"] = scope.visibility
-    # Before PACK-07 trust confirmation, SHARED/team configs are advisory only.
-    # Do not route writes into a repo-declared team context yet.
-    if scope.context and not scope.requires_trust_confirmation():
+    if scope.context:
         fields["context"] = scope.context
     return fields
 

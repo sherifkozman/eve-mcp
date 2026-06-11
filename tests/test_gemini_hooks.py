@@ -271,7 +271,7 @@ def test_memory_client_stamps_personal_scope_on_write_payloads(monkeypatch: pyte
         assert "X-managed-tenant-slug" not in headers
 
 
-def test_memory_client_stamps_shared_visibility_without_context_before_trust_gate(
+def test_memory_client_stamps_shared_advisory_context_without_tenant_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = gemini_hooks._MemoryClient(
@@ -301,7 +301,7 @@ def test_memory_client_stamps_shared_visibility_without_context_before_trust_gat
     assert client.extract(transcript="User: remember the shared decision.")[0]
 
     assert requests[0]["visibility"] == "SHARED"
-    assert "context" not in requests[0]
+    assert requests[0]["context"] == "team_alpha"
 
 
 def test_memory_client_stamps_explicit_env_tenant_slug_header(
