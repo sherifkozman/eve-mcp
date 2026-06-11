@@ -11,6 +11,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = REPO_ROOT / "packages" / "client"
 INSTALL_SCRIPT = PACKAGE_ROOT / "scripts" / "install-eve-client.sh"
+PUBLISH_SCRIPT = PACKAGE_ROOT / "scripts" / "publish-eve-client-pypi.sh"
+PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-eve-client.yml"
 
 
 def _run(
@@ -232,3 +234,203 @@ def test_install_script_force_fail_env_blocks_shadowed_binary_without_allow(tmp_
     assert result.returncode != 0
     assert "SECURITY WARNING:" in result.stderr
     assert "Aborting because EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 is set." in result.stderr
+
+
+def test_publish_script_dry_run_checks_artifacts_without_uploading(tmp_path: Path) -> None:
+    assert PUBLISH_SCRIPT.exists()
+    dist_dir = tmp_path / "dist"
+    bin_dir = tmp_path / "bin"
+    log_path = tmp_path / "commands.log"
+    dist_dir.mkdir()
+    bin_dir.mkdir()
+    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uvx").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uvx \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (bin_dir / "uvx").chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--dry-run",
+            "--skip-build",
+            "--dist-dir",
+            str(dist_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "EVE_TEST_COMMAND_LOG": str(log_path),
+        },
+    )
+
+    command_log = log_path.read_text(encoding="utf-8")
+    assert "uvx twine check" in command_log
+    assert "uv publish" not in command_log
+    assert "Dry run complete; not publishing" in result.stdout
+
+
+def test_publish_script_default_mode_checks_artifacts_without_uploading(tmp_path: Path) -> None:
+    assert PUBLISH_SCRIPT.exists()
+    dist_dir = tmp_path / "dist"
+    bin_dir = tmp_path / "bin"
+    log_path = tmp_path / "commands.log"
+    dist_dir.mkdir()
+    bin_dir.mkdir()
+    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uvx").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uvx \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (bin_dir / "uvx").chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--skip-build",
+            "--dist-dir",
+            str(dist_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "EVE_TEST_COMMAND_LOG": str(log_path),
+        },
+    )
+
+    command_log = log_path.read_text(encoding="utf-8")
+    assert "uvx twine check" in command_log
+    assert "uv publish" not in command_log
+    assert "Dry run complete; not publishing" in result.stdout
+
+
+def test_publish_script_requires_token_for_real_publish(tmp_path: Path) -> None:
+    assert PUBLISH_SCRIPT.exists()
+    dist_dir = tmp_path / "dist"
+    bin_dir = tmp_path / "bin"
+    dist_dir.mkdir()
+    bin_dir.mkdir()
+    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (bin_dir / "uvx").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (bin_dir / "uvx").chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--publish",
+            "--skip-build",
+            "--dist-dir",
+            str(dist_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "PYPI_API_TOKEN": "",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "PYPI_API_TOKEN is required for --publish" in result.stderr
+
+
+def test_publish_script_uses_env_token_without_putting_secret_on_command_line(
+    tmp_path: Path,
+) -> None:
+    assert PUBLISH_SCRIPT.exists()
+    dist_dir = tmp_path / "dist"
+    bin_dir = tmp_path / "bin"
+    log_path = tmp_path / "commands.log"
+    dist_dir.mkdir()
+    bin_dir.mkdir()
+    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uvx").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uvx \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (bin_dir / "uvx").chmod(0o755)
+
+    subprocess.run(
+        [
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--publish",
+            "--skip-build",
+            "--dist-dir",
+            str(dist_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "EVE_TEST_COMMAND_LOG": str(log_path),
+            "PYPI_API_TOKEN": "secret-token",
+        },
+    )
+
+    command_log = log_path.read_text(encoding="utf-8")
+    assert "uv publish" in command_log
+    assert "--token" not in command_log
+    assert "secret-token" not in command_log
+
+
+def test_publish_workflow_dry_runs_on_pr_and_publishes_only_on_release_tag() -> None:
+    assert PUBLISH_WORKFLOW.exists()
+    workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+    dry_run_job = workflow.split("  publish:", 1)[0]
+    publish_job = "  publish:" + workflow.split("  publish:", 1)[1]
+
+    assert "pull_request:" in workflow
+    assert "eve-client@*" in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "if: github.event_name == 'pull_request'" in dry_run_job
+    assert "packages/client/scripts/publish-eve-client-pypi.sh --dry-run" in dry_run_job
+    assert "--publish" not in dry_run_job
+    assert "PYPI_API_TOKEN" not in dry_run_job
+
+    assert "if: startsWith(github.ref, 'refs/tags/eve-client@')" in publish_job
+    assert "packages/client/scripts/publish-eve-client-pypi.sh --publish" in publish_job
+    assert "--dry-run" not in publish_job
+    assert "PYPI_API_TOKEN" in publish_job

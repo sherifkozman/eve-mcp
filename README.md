@@ -99,10 +99,11 @@ Alternative:
 pipx install git+https://github.com/sherifkozman/eve-mcp.git
 ```
 
-Or via the standalone bash installer:
+Or via the standalone bash installer. Save it first; do not pipe remote shell directly into `sh`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sherifkozman/eve-mcp/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sherifkozman/eve-mcp/main/install.sh -o install-eve.sh
+sh install-eve.sh
 ```
 
 Then confirm:
@@ -116,7 +117,7 @@ eve --help
 
 See [`examples/`](./examples/) for ready-to-paste MCP config snippets for Claude Code, Gemini CLI, and Codex CLI.
 
-### From PyPI later
+### From PyPI after package publish
 
 Once published, the package install will become:
 
