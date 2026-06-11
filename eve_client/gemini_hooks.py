@@ -8,6 +8,7 @@ context to inject.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -19,6 +20,7 @@ from eve_client.auth.base import CredentialStoreUnavailableError
 from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import resolve_api_base_url, resolve_config
 from eve_client.merge import source_agent_header
+from eve_client.scope import TENANT_SLUG_ENV_VAR, ResolvedScope, resolve_scope
 
 _MAX_TRANSCRIPT_BYTES = 800_000
 
@@ -40,13 +42,49 @@ def _api_base_url(value: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
 
 
+def _resolve_hook_scope() -> ResolvedScope | None:
+    try:
+        return resolve_scope()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"Scope resolution failed; continuing without scope defaults: {exc}")
+        return None
+
+
+def _scope_payload_fields(scope: ResolvedScope | None) -> dict[str, str]:
+    if scope is None:
+        return {}
+    fields: dict[str, str] = {}
+    if scope.visibility:
+        fields["visibility"] = scope.visibility
+    # Before PACK-07 trust confirmation, SHARED/team configs are advisory only.
+    if scope.context and not scope.requires_trust_confirmation():
+        fields["context"] = scope.context
+    return fields
+
+
+def _scope_header_fields(scope: ResolvedScope | None) -> dict[str, str]:
+    if scope is None or not scope.tenant_slug:
+        return {}
+    if os.environ.get(TENANT_SLUG_ENV_VAR, "").strip() != scope.tenant_slug:
+        return {}
+    return {"X-Managed-Tenant-Slug": scope.tenant_slug}
+
+
 class _MemoryClient:
-    def __init__(self, *, base_url: str, api_key: str | None, bearer_token: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str | None,
+        bearer_token: str | None,
+        scope: ResolvedScope | None = None,
+    ) -> None:
         self.base_url = _api_base_url(base_url)
         self.api_key = api_key
         self.bearer_token = bearer_token
+        self.scope = scope
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, include_scope: bool = False) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "X-Source-Agent": source_agent_header("gemini-cli"),
@@ -55,15 +93,19 @@ class _MemoryClient:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
         elif self.api_key:
             headers["X-API-Key"] = self.api_key
+        if include_scope:
+            headers.update(_scope_header_fields(self.scope))
         return headers
 
     def _post(
-        self, path: str, payload: dict[str, Any], *, timeout: float
+        self, path: str, payload: dict[str, Any], *, timeout: float, include_scope: bool = False
     ) -> tuple[bool, dict[str, Any] | None]:
+        if include_scope:
+            payload = {**payload, **_scope_payload_fields(self.scope)}
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
-            headers=self._headers(),
+            headers=self._headers(include_scope=include_scope),
             method="POST",
         )
         try:
@@ -96,6 +138,7 @@ class _MemoryClient:
             "/memory/hook/compact",
             {"session_id": session_id, "messages": messages},
             timeout=5.0,
+            include_scope=True,
         )
 
     def extract(self, *, transcript: str) -> tuple[bool, dict[str, Any] | None]:
@@ -109,6 +152,7 @@ class _MemoryClient:
                 "use_extraction": True,
             },
             timeout=20.0,
+            include_scope=True,
         )
 
 
@@ -361,6 +405,7 @@ def pre_compact() -> None:
         base_url=resolve_api_base_url(resolve_config().mcp_base_url),
         api_key=api_key,
         bearer_token=bearer,
+        scope=_resolve_hook_scope(),
     )
     client.pre_compact(session_id=session_id, messages=messages)
     _safe_exit({"ok": True})
@@ -381,6 +426,7 @@ def session_end() -> None:
         base_url=resolve_api_base_url(resolve_config().mcp_base_url),
         api_key=api_key,
         bearer_token=bearer,
+        scope=_resolve_hook_scope(),
     )
     client.extract(transcript=transcript)
     _safe_exit({"ok": True})

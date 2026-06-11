@@ -22,6 +22,7 @@ from eve_client.auth.base import CredentialStoreUnavailableError
 from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import resolve_api_base_url, resolve_config
 from eve_client.merge import source_agent_header
+from eve_client.scope import TENANT_SLUG_ENV_VAR, ResolvedScope, resolve_scope
 
 _MAX_TRANSCRIPT_BYTES = 800_000
 API_KEY_401_HELP = "Your Eve API key may be invalid or expired; run `eve connect` to refresh it."
@@ -42,25 +43,62 @@ def _safe_exit() -> None:
     raise SystemExit(0)
 
 
+def _resolve_hook_scope() -> ResolvedScope | None:
+    try:
+        return resolve_scope()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"Scope resolution failed; continuing without scope defaults: {exc}")
+        return None
+
+
+def _scope_payload_fields(scope: ResolvedScope | None) -> dict[str, str]:
+    if scope is None:
+        return {}
+    fields: dict[str, str] = {}
+    if scope.visibility:
+        fields["visibility"] = scope.visibility
+    # Before PACK-07 trust confirmation, SHARED/team configs are advisory only.
+    # Do not route writes into a repo-declared team context yet.
+    if scope.context and not scope.requires_trust_confirmation():
+        fields["context"] = scope.context
+    return fields
+
+
+def _scope_header_fields(scope: ResolvedScope | None) -> dict[str, str]:
+    if scope is None or not scope.tenant_slug:
+        return {}
+    if os.environ.get(TENANT_SLUG_ENV_VAR, "").strip() != scope.tenant_slug:
+        return {}
+    return {"X-Managed-Tenant-Slug": scope.tenant_slug}
+
+
 class _MemoryClient:
-    def __init__(self, *, base_url: str, api_key: str) -> None:
+    def __init__(
+        self, *, base_url: str, api_key: str, scope: ResolvedScope | None = None
+    ) -> None:
         self.base_url = _api_base_url(base_url)
         self.api_key = api_key
+        self.scope = scope
 
-    def _headers(self) -> dict[str, str]:
-        return {
+    def _headers(self, *, include_scope: bool = False) -> dict[str, str]:
+        headers = {
             "Content-Type": "application/json",
             "X-API-Key": self.api_key,
             "X-Source-Agent": source_agent_header("claude-code"),
         }
+        if include_scope:
+            headers.update(_scope_header_fields(self.scope))
+        return headers
 
     def _post(
-        self, path: str, payload: dict[str, Any], *, timeout: float
+        self, path: str, payload: dict[str, Any], *, timeout: float, include_scope: bool = False
     ) -> tuple[bool, dict[str, Any] | None]:
+        if include_scope:
+            payload = {**payload, **_scope_payload_fields(self.scope)}
         request = urllib.request.Request(
             f"{self.base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
-            headers=self._headers(),
+            headers=self._headers(include_scope=include_scope),
             method="POST",
         )
         try:
@@ -111,6 +149,7 @@ class _MemoryClient:
                 "tool_name": "claude-code",
             },
             timeout=15.0,
+            include_scope=True,
         )
 
     def extract(
@@ -124,7 +163,7 @@ class _MemoryClient:
         }
         if session_id:
             payload["session_id"] = session_id
-        return self._post("/memory/extract", payload, timeout=15.0)
+        return self._post("/memory/extract", payload, timeout=15.0, include_scope=True)
 
     def session_end(
         self,
@@ -138,7 +177,7 @@ class _MemoryClient:
             payload["session_id"] = session_id
         if status:
             payload["status"] = status
-        return self._post("/memory/session/end", payload, timeout=5.0)
+        return self._post("/memory/session/end", payload, timeout=5.0, include_scope=True)
 
 
 def _load_hook_input() -> dict[str, Any]:
@@ -345,7 +384,8 @@ def session_start_main() -> None:
     transcript_path = str(hook_input.get("transcript_path", ""))
     recent_topics = _extract_recent_topics(transcript_path)
     client = _MemoryClient(
-        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url),
+        api_key=api_key,
     )
     ok, data = client.session_start(
         session_id=hook_input.get("session_id"),
@@ -372,7 +412,8 @@ def prompt_enrich_main() -> None:
     if not api_key:
         _safe_exit()
     client = _MemoryClient(
-        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url),
+        api_key=api_key,
     )
     ok, data = client.search(query=prompt)
     if not ok or not data:
@@ -399,7 +440,9 @@ def pre_compact_main() -> None:
     if not api_key:
         _safe_exit()
     client = _MemoryClient(
-        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url),
+        api_key=api_key,
+        scope=_resolve_hook_scope(),
     )
     client.pre_compaction(session_id=session_id, critical_facts=critical_facts)
     _safe_exit()
@@ -415,7 +458,9 @@ def session_end_main() -> None:
         _safe_exit()
     session_id = os.environ.get("EVE_MEMORY_SESSION_ID") or hook_input.get("session_id")
     client = _MemoryClient(
-        base_url=resolve_api_base_url(resolve_config().mcp_base_url), api_key=api_key
+        base_url=resolve_api_base_url(resolve_config().mcp_base_url),
+        api_key=api_key,
+        scope=_resolve_hook_scope(),
     )
     client.extract(
         transcript=transcript, session_id=session_id if isinstance(session_id, str) else None

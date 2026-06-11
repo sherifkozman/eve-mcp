@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from eve_client import claude_hooks
+from eve_client.scope import ResolvedScope
 
 
 class _Response:
@@ -242,3 +243,107 @@ def test_session_end_reads_transcript_and_calls_extract_and_end(
     assert "Remember my preference" in requests[0][1]["transcript"]
     assert requests[1][0].endswith("/memory/session/end")
     assert requests[1][1]["session_id"] == "sess-2"
+
+
+def test_memory_client_stamps_personal_scope_on_write_payloads() -> None:
+    client = claude_hooks._MemoryClient(
+        base_url="https://mcp.evemem.com/mcp",
+        api_key="eve-secret",
+        scope=ResolvedScope(visibility="PERSONAL", context="project_alpha"),
+    )
+    requests: list[tuple[str, dict[str, object], dict[str, str]]] = []
+
+    def _urlopen(request, timeout=0):  # noqa: ANN001
+        requests.append(
+            (
+                request.full_url,
+                json.loads(request.data.decode("utf-8")),
+                dict(request.header_items()),
+            )
+        )
+        return _Response({"ok": True})
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=_urlopen):
+        assert client.extract(transcript="User: remember the alpha project preference.", session_id=None)[0]
+        assert client.session_end(summary="Finished alpha work", session_id="sess-1", status=None)[0]
+        assert client.pre_compaction(session_id="sess-1", critical_facts=["Alpha decision"])[0]
+
+    for _url, payload, headers in requests:
+        assert payload["visibility"] == "PERSONAL"
+        assert payload["context"] == "project_alpha"
+        assert "X-managed-tenant-slug" not in headers
+
+
+def test_memory_client_stamps_shared_visibility_without_context_before_trust_gate() -> None:
+    client = claude_hooks._MemoryClient(
+        base_url="https://mcp.evemem.com/mcp",
+        api_key="eve-secret",
+        scope=ResolvedScope(visibility="SHARED", context="team_alpha", tenant_slug="acme-team"),
+    )
+    requests: list[tuple[dict[str, object], dict[str, str]]] = []
+
+    def _urlopen(request, timeout=0):  # noqa: ANN001
+        requests.append((json.loads(request.data.decode("utf-8")), dict(request.header_items())))
+        return _Response({"ok": True})
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=_urlopen):
+        assert client.extract(transcript="User: remember the team decision.", session_id=None)[0]
+
+    payload, headers = requests[0]
+    assert payload["visibility"] == "SHARED"
+    assert "context" not in payload
+    assert "X-managed-tenant-slug" not in headers
+
+
+def test_memory_client_stamps_explicit_env_tenant_slug_header(monkeypatch) -> None:
+    monkeypatch.setenv("EVE_TENANT_SLUG", "acme-team")
+    client = claude_hooks._MemoryClient(
+        base_url="https://mcp.evemem.com/mcp",
+        api_key="eve-secret",
+        scope=ResolvedScope(visibility="PERSONAL", context="project_alpha", tenant_slug="acme-team"),
+    )
+    seen_headers: list[dict[str, str]] = []
+
+    def _urlopen(request, timeout=0):  # noqa: ANN001
+        seen_headers.append(dict(request.header_items()))
+        return _Response({"ok": True})
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=_urlopen):
+        assert client.extract(transcript="User: remember the scoped tenant decision.", session_id=None)[0]
+
+    assert seen_headers[0]["X-managed-tenant-slug"] == "acme-team"
+
+
+def test_hook_scope_resolution_failure_fails_open(monkeypatch, tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    transcript_path = tmp_path / "transcript.jsonl"
+    transcript_path.write_text(
+        json.dumps({"role": "human", "content": "Remember this implementation detail."}) + "\n"
+        + json.dumps({"role": "assistant", "content": "The detail is preserved for later."})
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"transcript_path": str(transcript_path)})),
+    )
+    monkeypatch.setattr(
+        "eve_client.claude_hooks.resolve_scope",
+        lambda: (_ for _ in ()).throw(RuntimeError("scope unavailable")),
+    )
+    requests: list[dict[str, object]] = []
+
+    def _urlopen(request, timeout=0):  # noqa: ANN001
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return _Response({"ok": True})
+
+    with patch("eve_client.claude_hooks.urllib.request.urlopen", side_effect=_urlopen):
+        try:
+            claude_hooks.session_end_main()
+        except SystemExit as exc:
+            assert exc.code == 0
+
+    assert requests
+    assert all("visibility" not in payload and "context" not in payload for payload in requests)
