@@ -23,6 +23,7 @@ class ClaudeCodeProvider(ToolProvider):
         auth_mode=None,
         prompt_scope=None,
         hooks_enabled=None,
+        scope_env: dict[str, str] | None = None,
     ) -> ToolPlan:
         selected_auth_mode = auth_mode or self.auth_mode
         install_hooks = True if hooks_enabled is None else hooks_enabled
@@ -53,6 +54,7 @@ class ClaudeCodeProvider(ToolProvider):
                 details={
                     "config_format": "json",
                     "mcp_base_url": mcp_base_url,
+                    **({"scope_env": dict(scope_env)} if scope_env else {}),
                 },
             ),
             planned_action(

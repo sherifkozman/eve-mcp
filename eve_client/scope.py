@@ -15,6 +15,7 @@ MAX_SCOPE_CONFIG_BYTES = 64 * 1024
 VISIBILITY_ENV_VAR = "EVE_DEFAULT_VISIBILITY"
 CONTEXT_ENV_VAR = "EVE_DEFAULT_CONTEXT"
 TENANT_SLUG_ENV_VAR = "EVE_TENANT_SLUG"
+SCOPE_ENV_KEYS = (VISIBILITY_ENV_VAR, CONTEXT_ENV_VAR, TENANT_SLUG_ENV_VAR)
 
 _CONTEXT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,99}$")
 _TENANT_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
@@ -213,3 +214,17 @@ def resolve_scope(cwd: Path | str | None = None) -> ResolvedScope | None:
         tenant_slug=env_scope.tenant_slug or file_scope.tenant_slug,
     )
     return merged if merged.has_scope_default() else None
+
+
+def scope_env(scope: ResolvedScope | None) -> dict[str, str]:
+    """Render resolved advisory scope defaults as tool config env values."""
+    if scope is None:
+        return {}
+    env: dict[str, str] = {}
+    if scope.visibility:
+        env[VISIBILITY_ENV_VAR] = scope.visibility
+    if scope.context:
+        env[CONTEXT_ENV_VAR] = scope.context
+    if scope.tenant_slug:
+        env[TENANT_SLUG_ENV_VAR] = scope.tenant_slug
+    return env

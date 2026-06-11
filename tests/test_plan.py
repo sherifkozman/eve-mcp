@@ -6,6 +6,24 @@ from eve_client.config import ResolvedConfig
 from eve_client.integrations.claude_desktop import ClaudeDesktopProvider
 from eve_client.models import DetectedTool
 from eve_client.plan import build_install_plan
+from eve_client.scope import ResolvedScope
+
+
+def _config(*, scope: ResolvedScope | None = None) -> ResolvedConfig:
+    return ResolvedConfig(
+        config_dir=Path("/tmp/eve-config"),
+        config_path=Path("/tmp/eve-config/config.json"),
+        state_dir=Path("/tmp/eve"),
+        project_root=Path("/tmp/project"),
+        mcp_base_url="https://mcp.evemem.com",
+        mcp_server_name="eve-memory",
+        environment="production",
+        feature_claude_desktop=False,
+        codex_enabled=True,
+        codex_source="config",
+        allow_file_secret_fallback=True,
+        scope=scope,
+    )
 
 
 def test_build_install_plan_marks_desktop_disabled() -> None:
@@ -212,3 +230,66 @@ def test_build_install_plan_disables_codex_when_config_disabled() -> None:
     assert plan.tool_plans[0].supported is False
     assert plan.tool_plans[0].actions == []
     assert "disabled by default" in (plan.tool_plans[0].reason or "")
+
+
+def test_build_install_plan_includes_scope_env_for_write_config_actions() -> None:
+    expected_scope_env = {
+        "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+        "EVE_DEFAULT_CONTEXT": "TrackB",
+        "EVE_TENANT_SLUG": "acme-team",
+    }
+    detected = [
+        DetectedTool(
+            name="claude-code",
+            config_path=Path("/tmp/.claude.json"),
+            config_format="json",
+            supports_hooks=True,
+            binary_found=True,
+            config_exists=False,
+        ),
+        DetectedTool(
+            name="gemini-cli",
+            config_path=Path("/tmp/.gemini/settings.json"),
+            config_format="json",
+            supports_hooks=True,
+            binary_found=True,
+            config_exists=False,
+        ),
+        DetectedTool(
+            name="codex-cli",
+            config_path=Path("/tmp/.codex/config.toml"),
+            config_format="toml",
+            supports_hooks=False,
+            binary_found=True,
+            config_exists=False,
+        ),
+    ]
+    plan = build_install_plan(
+        detected,
+        _config(scope=ResolvedScope("PERSONAL", "TrackB", "acme-team")),
+    )
+
+    for tool_plan in plan.tool_plans:
+        write_config = next(
+            action for action in tool_plan.actions if action.action_type == "write_config"
+        )
+        assert write_config.details["scope_env"] == expected_scope_env
+        assert write_config.to_dict()["details"]["scope_env"] == expected_scope_env
+
+
+def test_build_install_plan_omits_scope_env_when_scope_is_not_configured() -> None:
+    detected = [
+        DetectedTool(
+            name="claude-code",
+            config_path=Path("/tmp/.claude.json"),
+            config_format="json",
+            supports_hooks=True,
+            binary_found=True,
+            config_exists=False,
+        )
+    ]
+    plan = build_install_plan(detected, _config(scope=None))
+    write_config = next(
+        action for action in plan.tool_plans[0].actions if action.action_type == "write_config"
+    )
+    assert "scope_env" not in write_config.details

@@ -5,6 +5,7 @@ from __future__ import annotations
 from eve_client.config import ResolvedConfig
 from eve_client.integrations import get_adapter
 from eve_client.models import AuthMode, DetectedTool, InstallPlan, PromptScope, ToolName
+from eve_client.scope import scope_env
 
 
 def feature_enabled_for_gate(feature_gate: str | None, config: ResolvedConfig) -> bool:
@@ -39,6 +40,7 @@ def build_install_plan(
     auth_overrides = auth_overrides or {}
     prompt_scope_overrides = prompt_scope_overrides or {}
     hook_overrides = hook_overrides or {}
+    resolved_scope_env = scope_env(config.scope)
     for detected in detected_tools:
         adapter = get_adapter(detected.name)
         tool_plan = adapter.build_plan(
@@ -47,6 +49,7 @@ def build_install_plan(
             auth_mode=auth_overrides.get(detected.name),
             prompt_scope=prompt_scope_overrides.get(detected.name),
             hooks_enabled=hook_overrides.get(detected.name),
+            scope_env=resolved_scope_env,
         )
         if not feature_enabled(detected, config):
             tool_plan.supported = False

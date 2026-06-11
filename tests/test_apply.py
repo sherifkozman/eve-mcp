@@ -17,6 +17,7 @@ from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
 from eve_client.plan import build_install_plan
+from eve_client.scope import ResolvedScope
 from eve_client.transaction_state import load_transaction_state
 
 
@@ -43,7 +44,7 @@ def patched_keyring(state: dict[str, str] | None = None):
         yield
 
 
-def _config(tmp_path: Path) -> ResolvedConfig:
+def _config(tmp_path: Path, *, scope: ResolvedScope | None = None) -> ResolvedConfig:
     return ResolvedConfig(
         config_dir=tmp_path / ".eve-config",
         config_path=tmp_path / ".eve-config" / "config.json",
@@ -56,6 +57,7 @@ def _config(tmp_path: Path) -> ResolvedConfig:
         codex_enabled=True,
         codex_source="config",
         allow_file_secret_fallback=True,
+        scope=scope,
     )
 
 
@@ -155,6 +157,51 @@ def test_apply_install_plan_writes_project_scoped_gemini_companion(
     assert result.applied_actions == 3
     assert (tmp_path / "GEMINI.md").exists()
     assert not (tmp_path / ".gemini" / "GEMINI.md").exists()
+
+
+def test_apply_install_plan_writes_scope_env_for_supported_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    scope = ResolvedScope("PERSONAL", "TrackB", "acme-team")
+    config = _config(tmp_path, scope=scope)
+    expected_env = {
+        "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+        "EVE_DEFAULT_CONTEXT": "TrackB",
+        "EVE_TENANT_SLUG": "acme-team",
+    }
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch(
+            "eve_client.detect.base.shutil.which",
+            side_effect=lambda name: f"/usr/bin/{name}"
+            if name in {"claude", "gemini", "codex"}
+            else None,
+        ),
+        patched_keyring(),
+    ):
+        detected = detect_tools(only=["claude-code", "gemini-cli", "codex-cli"])
+        plan = build_install_plan(detected, config, auth_overrides={"codex-cli": "api-key"})
+        apply_install_plan(
+            plan,
+            config,
+            LocalCredentialStore(config.state_dir),
+            provided_api_keys={
+                "claude-code": "eve-secret",
+                "gemini-cli": "eve-secret",
+                "codex-cli": "eve-secret",
+            },
+            auth_overrides={"codex-cli": "api-key"},
+        )
+
+    claude_payload = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    assert claude_payload["mcpServers"]["eve-memory"]["env"] == expected_env
+    gemini_payload = json.loads(
+        (tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8")
+    )
+    assert gemini_payload["mcpServers"]["eve-memory"]["env"] == expected_env
+    codex_payload = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
+    assert codex_payload["mcp_servers"]["eve-memory"]["env"] == expected_env
 
 
 def test_apply_preserves_existing_active_claude_md_content(

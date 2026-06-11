@@ -12,8 +12,9 @@ from eve_client.auth.base import CredentialStoreUnavailableError
 from eve_client.auth.local_store import LocalCredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
-from eve_client.merge import source_agent_header
+from eve_client.merge import merge_json_config, merge_toml_config, source_agent_header
 from eve_client.plan import build_install_plan
+from eve_client.scope import ResolvedScope
 from eve_client.verify import verify_connectivity, verify_tools
 
 
@@ -38,7 +39,7 @@ def patched_keyring(state: dict[str, str] | None = None):
         yield state
 
 
-def _config(tmp_path: Path) -> ResolvedConfig:
+def _config(tmp_path: Path, *, scope: ResolvedScope | None = None) -> ResolvedConfig:
     return ResolvedConfig(
         config_dir=tmp_path / ".eve-config",
         config_path=tmp_path / ".eve-config" / "config.json",
@@ -51,6 +52,7 @@ def _config(tmp_path: Path) -> ResolvedConfig:
         codex_enabled=True,
         codex_source="config",
         allow_file_secret_fallback=True,
+        scope=scope,
     )
 
 
@@ -220,6 +222,144 @@ def test_verify_tools_reports_live_connectivity(
     assert results[0]["eve_configured"] is True
     assert results[0]["hooks_present"] is True
     assert results[0]["connectivity"]["success"] is True
+
+
+def test_verify_tools_reports_scope_env_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, scope=ResolvedScope("PERSONAL", "TrackB", "acme-team"))
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+        patched_keyring({}),
+    ):
+        detected = detect_tools(only=["claude-code"])
+        config_path = tmp_path / ".claude.json"
+        config_path.write_text(
+            merge_json_config(
+                config_path,
+                "claude-code",
+                "https://mcp.evemem.com",
+                "eve-secret",
+                scope_env={
+                    "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+                    "EVE_DEFAULT_CONTEXT": "OldProject",
+                },
+            ),
+            encoding="utf-8",
+        )
+        results = verify_tools(detected, config, LocalCredentialStore(config.state_dir))
+    assert results[0]["eve_configured"] is True
+    assert results[0]["scope_env_configured"] is False
+    assert results[0]["scope_env_drift"] == [
+        "EVE_DEFAULT_CONTEXT",
+        "EVE_TENANT_SLUG",
+    ]
+
+
+def test_verify_tools_reports_scope_env_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, scope=ResolvedScope("PERSONAL", "TrackB", "acme-team"))
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/gemini"),
+        patched_keyring({}),
+    ):
+        detected = detect_tools(only=["gemini-cli"])
+        config_path = tmp_path / ".gemini" / "settings.json"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            merge_json_config(
+                config_path,
+                "gemini-cli",
+                "https://mcp.evemem.com",
+                "eve-secret",
+                scope_env={
+                    "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+                    "EVE_DEFAULT_CONTEXT": "TrackB",
+                    "EVE_TENANT_SLUG": "acme-team",
+                },
+            ),
+            encoding="utf-8",
+        )
+        results = verify_tools(detected, config, LocalCredentialStore(config.state_dir))
+    assert results[0]["scope_env_configured"] is True
+    assert results[0]["scope_env_drift"] == []
+
+
+def test_verify_tools_reports_stale_scope_env_when_scope_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, scope=None)
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+        patched_keyring({}),
+    ):
+        detected = detect_tools(only=["claude-code"])
+        config_path = tmp_path / ".claude.json"
+        config_path.write_text(
+            merge_json_config(
+                config_path,
+                "claude-code",
+                "https://mcp.evemem.com",
+                "eve-secret",
+                scope_env={
+                    "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+                    "EVE_DEFAULT_CONTEXT": "TrackB",
+                },
+            ),
+            encoding="utf-8",
+        )
+        results = verify_tools(detected, config, LocalCredentialStore(config.state_dir))
+    assert results[0]["scope_env_configured"] is False
+    assert results[0]["scope_env_drift"] == [
+        "EVE_DEFAULT_VISIBILITY",
+        "EVE_DEFAULT_CONTEXT",
+    ]
+
+
+def test_verify_tools_reports_codex_toml_scope_env_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, scope=ResolvedScope("PERSONAL", "TrackB", "acme-team"))
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/codex"),
+        patched_keyring({}),
+    ):
+        detected = detect_tools(only=["codex-cli"])
+        config_path = tmp_path / ".codex" / "config.toml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            merge_toml_config(
+                config_path,
+                "codex-cli",
+                "https://mcp.evemem.com",
+                "eve-secret",
+                scope_env={
+                    "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+                    "EVE_DEFAULT_CONTEXT": "OldProject",
+                },
+            ),
+            encoding="utf-8",
+        )
+        results = verify_tools(
+            detected,
+            config,
+            LocalCredentialStore(config.state_dir),
+            auth_overrides={"codex-cli": "oauth"},
+        )
+    assert results[0]["scope_env_configured"] is False
+    assert results[0]["scope_env_drift"] == [
+        "EVE_DEFAULT_CONTEXT",
+        "EVE_TENANT_SLUG",
+    ]
 
 
 def test_verify_tools_for_codex_waits_for_local_config_before_connecting(

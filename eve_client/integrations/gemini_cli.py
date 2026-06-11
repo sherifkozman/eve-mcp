@@ -24,6 +24,7 @@ class GeminiCliProvider(ToolProvider):
         auth_mode=None,
         prompt_scope: PromptScope | None = None,
         hooks_enabled: bool | None = None,
+        scope_env: dict[str, str] | None = None,
     ) -> ToolPlan:
         selected_auth_mode = auth_mode or self.auth_mode
         hook_command = (
@@ -56,7 +57,11 @@ class GeminiCliProvider(ToolProvider):
                 requires_backup=True,
                 requires_confirmation=True,
                 idempotent=True,
-                details={"config_format": "json", "mcp_base_url": mcp_base_url},
+                details={
+                    "config_format": "json",
+                    "mcp_base_url": mcp_base_url,
+                    **({"scope_env": dict(scope_env)} if scope_env else {}),
+                },
             ),
         ]
         if install_hooks:

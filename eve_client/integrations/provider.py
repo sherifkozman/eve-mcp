@@ -19,7 +19,7 @@ def planned_action(
     requires_backup: bool,
     requires_confirmation: bool,
     idempotent: bool,
-    details: dict[str, str] | None = None,
+    details: dict[str, object] | None = None,
 ) -> PlannedAction:
     return PlannedAction(
         action_id=str(uuid4()),
@@ -51,5 +51,6 @@ class ToolProvider:
         auth_mode: AuthMode | None = None,
         prompt_scope: PromptScope | None = None,
         hooks_enabled: bool | None = None,
+        scope_env: dict[str, str] | None = None,
     ) -> ToolPlan:
         raise NotImplementedError

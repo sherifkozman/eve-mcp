@@ -46,7 +46,7 @@ class PlannedAction:
     requires_backup: bool
     requires_confirmation: bool
     idempotent: bool
-    details: dict[str, str] = field(default_factory=dict)
+    details: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)

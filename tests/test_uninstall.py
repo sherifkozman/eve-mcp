@@ -12,6 +12,7 @@ from eve_client.config import ResolvedConfig
 from eve_client.detect.base import detect_tools
 from eve_client.manifest import load_manifest, manifest_path
 from eve_client.plan import build_install_plan
+from eve_client.scope import ResolvedScope
 from eve_client.uninstall import UninstallError, uninstall_tools
 
 
@@ -44,7 +45,7 @@ def patched_keyring(state: dict[str, str] | None = None):
         yield state
 
 
-def _config(tmp_path: Path) -> ResolvedConfig:
+def _config(tmp_path: Path, *, scope: ResolvedScope | None = None) -> ResolvedConfig:
     return ResolvedConfig(
         config_dir=tmp_path / ".eve-config",
         config_path=tmp_path / ".eve-config" / "config.json",
@@ -57,6 +58,7 @@ def _config(tmp_path: Path) -> ResolvedConfig:
         codex_enabled=True,
         codex_source="config",
         allow_file_secret_fallback=True,
+        scope=scope,
     )
 
 
@@ -163,6 +165,34 @@ def test_uninstall_preserves_user_content_outside_eve_companion_block(
     )
     assert "eve-memory" not in settings_payload.get("mcpServers", {})
     assert "hooks" not in settings_payload or not settings_payload["hooks"]
+
+
+def test_uninstall_removes_scoped_env_with_eve_config_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _config(tmp_path, scope=ResolvedScope("PERSONAL", "TrackB", "acme-team"))
+    keyring_state: dict[str, str] = {}
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+        patched_keyring(keyring_state),
+    ):
+        detected = detect_tools(only=["claude-code"])
+        plan = build_install_plan(detected, config)
+        credential_store = LocalCredentialStore(config.state_dir)
+        apply_install_plan(
+            plan,
+            config,
+            credential_store,
+            provided_api_keys={"claude-code": "eve-secret"},
+        )
+        installed = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+        assert installed["mcpServers"]["eve-memory"]["env"]["EVE_DEFAULT_CONTEXT"] == "TrackB"
+        uninstall_tools(config=config, credential_store=credential_store, tools=["claude-code"])
+
+    payload = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    assert "eve-memory" not in payload.get("mcpServers", {})
 
 
 def test_uninstall_refuses_user_modified_eve_json_entry(

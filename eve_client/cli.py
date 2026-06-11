@@ -551,13 +551,30 @@ def _legacy_codex_warning(config) -> str | None:
     return None
 
 
+def _scope_env_lines(action) -> list[str]:
+    scope_env = action.details.get("scope_env")
+    if not isinstance(scope_env, dict) or not scope_env:
+        return []
+    return [
+        f"{key}=<configured>"
+        for key, value in scope_env.items()
+        if isinstance(key, str) and isinstance(value, str)
+    ]
+
+
+def _print_action(action, *, indent: str = "") -> None:
+    location = f" -> {action.path}" if action.path else ""
+    console.print(f"{indent}- {action.summary}{location}")
+    for line in _scope_env_lines(action):
+        console.print(f"{indent}  scope env: {line}")
+
+
 def _print_tool_actions(tool_plan) -> None:
     if not tool_plan.actions:
         return
     console.print("[bold]Planned changes[/bold]")
     for action in tool_plan.actions:
-        location = f" -> {action.path}" if action.path else ""
-        console.print(f"- {action.summary}{location}")
+        _print_action(action)
 
 
 from eve_client.tty import stdin_is_tty as _stdin_is_tty  # noqa: E402
@@ -1380,8 +1397,7 @@ def install(
             continue
         console.print(f"\n[bold]{tool_plan.tool}[/bold]")
         for action in tool_plan.actions:
-            location = f" -> {action.path}" if action.path else ""
-            console.print(f"- {action.summary}{location}")
+            _print_action(action)
     if dry_run:
         console.print("\n[dim]Dry run only. Re-run with --apply to execute after review.[/dim]")
         if not selected_tools and not all_tools:
@@ -1688,7 +1704,9 @@ def verify(
     table.add_column("Notes")
     has_failures = False
     for item in results:
-        local_ok = item["binary_found"] and item["eve_configured"]
+        local_ok = (
+            item["binary_found"] and item["eve_configured"] and item["scope_env_configured"]
+        )
         remote = item["connectivity"]
         remote_ok = bool(remote["success"])
         has_failures = has_failures or not remote_ok or not local_ok
@@ -1701,6 +1719,9 @@ def verify(
             notes.append("binary missing")
         elif not item["eve_configured"]:
             notes.append("Eve config missing")
+        elif not item["scope_env_configured"]:
+            drift = ", ".join(item["scope_env_drift"])
+            notes.append(f"scope env drift: {drift}")
         elif not remote_ok:
             notes.append(str(remote["error"]))
         table.add_row(
@@ -1749,6 +1770,7 @@ def repair(
             if (
                 not item["eve_configured"]
                 or not item["companion_present"]
+                or not item["scope_env_configured"]
                 or not item["connectivity"]["success"]
             ):
                 status = "repair suggested"

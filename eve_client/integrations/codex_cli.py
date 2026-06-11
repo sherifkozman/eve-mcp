@@ -22,6 +22,7 @@ class CodexCliProvider(ToolProvider):
         auth_mode=None,
         prompt_scope=None,
         hooks_enabled=None,
+        scope_env: dict[str, str] | None = None,
     ) -> ToolPlan:
         selected_auth_mode = auth_mode or self.auth_mode
         reason = (
@@ -46,6 +47,7 @@ class CodexCliProvider(ToolProvider):
                     "config_format": "toml",
                     "mcp_base_url": mcp_base_url,
                     "auth_mode": selected_auth_mode,
+                    **({"scope_env": dict(scope_env)} if scope_env else {}),
                 },
             ),
             planned_action(

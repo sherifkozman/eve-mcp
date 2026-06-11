@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
 from eve_client.models import AuthMode, ToolName
+from eve_client.scope import SCOPE_ENV_KEYS
 
 MARKER_BEGIN = "<!-- EVE-BEGIN:{tool}:v1 -->"
 MARKER_END = "<!-- EVE-END:{tool}:v1 -->"
@@ -30,6 +32,7 @@ TOML_SECTION_HEADER = '[mcp_servers."eve-memory"]'
 SOURCE_AGENT_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 CLAUDE_HOOK_MARKERS = ("eve-claude-hook", "eve_client.claude_hooks")
 GEMINI_HOOK_MARKERS = ("eve-gemini-hook", "eve_client.gemini_hooks")
+_SCOPE_ENV_KEYS_SET = set(SCOPE_ENV_KEYS)
 
 
 def _source_agent(tool: ToolName) -> str:
@@ -52,34 +55,48 @@ def _build_headers(tool: ToolName, auth_mode: AuthMode, credential: str | None) 
     return {"X-API-Key": credential, "X-Source-Agent": _source_agent(tool)}
 
 
+def _clean_scope_env(scope_env: dict[str, str] | None) -> dict[str, str]:
+    if not scope_env:
+        return {}
+    return {
+        key: value
+        for key in SCOPE_ENV_KEYS
+        if isinstance((value := scope_env.get(key)), str) and value
+    }
+
+
 def build_mcp_json_entry(
     tool: ToolName,
     mcp_base_url: str,
     credential: str | None,
     *,
     auth_mode: AuthMode = "api-key",
+    scope_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     key = "eve-memory"
+    env = _clean_scope_env(scope_env)
     if tool == "gemini-cli":
-        return {
-            key: {
-                "httpUrl": mcp_base_url,
-                "headers": _build_headers(tool, auth_mode, credential),
-            }
-        }
-    return {
-        key: {
-            "type": "http",
-            "url": mcp_base_url,
+        entry: dict[str, Any] = {
+            "httpUrl": mcp_base_url,
             "headers": _build_headers(tool, auth_mode, credential),
         }
+        if env:
+            entry["env"] = env
+        return {key: entry}
+    entry = {
+        "type": "http",
+        "url": mcp_base_url,
+        "headers": _build_headers(tool, auth_mode, credential),
     }
+    if env:
+        entry["env"] = env
+    return {key: entry}
 
 
 def _allowed_json_entry_keys(tool: ToolName) -> tuple[set[str], set[str]]:
     if tool == "gemini-cli":
-        return {"httpUrl", "headers"}, {"X-API-Key", "X-Source-Agent", "Authorization"}
-    return {"type", "url", "headers"}, {"X-API-Key", "X-Source-Agent", "Authorization"}
+        return {"httpUrl", "headers", "env"}, {"X-API-Key", "X-Source-Agent", "Authorization"}
+    return {"type", "url", "headers", "env"}, {"X-API-Key", "X-Source-Agent", "Authorization"}
 
 
 def merge_json_config(
@@ -91,6 +108,7 @@ def merge_json_config(
     auth_mode: AuthMode = "api-key",
     hook_command: str | None = None,
     hooks_only: bool = False,
+    scope_env: dict[str, str] | None = None,
 ) -> str:
     """Merge Eve config into a JSON tool config without disturbing other entries."""
     existing: dict[str, Any]
@@ -98,7 +116,13 @@ def merge_json_config(
     if not hooks_only:
         existing.setdefault("mcpServers", {})
         existing["mcpServers"].update(
-            build_mcp_json_entry(tool, mcp_base_url, credential, auth_mode=auth_mode)
+            build_mcp_json_entry(
+                tool,
+                mcp_base_url,
+                credential,
+                auth_mode=auth_mode,
+                scope_env=scope_env,
+            )
         )
     if hook_command:
         if tool == "claude-code":
@@ -131,6 +155,14 @@ def eve_json_entry_has_unknown_fields(config_path: Path, tool: ToolName) -> bool
         return True
     if not set(headers.keys()).issubset(allowed_header_keys):
         return True
+    if "env" in entry:
+        env = entry["env"]
+        if (
+            not isinstance(env, dict)
+            or not set(env.keys()).issubset(_SCOPE_ENV_KEYS_SET)
+            or any(not isinstance(value, str) for value in env.values())
+        ):
+            return True
     if tool == "claude-code":
         return claude_hooks_have_unknown_fields(config_path)
     if tool == "gemini-cli":
@@ -180,10 +212,13 @@ def merge_toml_config(
     credential: str | None,
     *,
     auth_mode: AuthMode = "api-key",
+    scope_env: dict[str, str] | None = None,
 ) -> str:
     """Merge Eve config into TOML while preserving surrounding formatting/comments."""
     if tool == "codex-cli":
-        snippet = _build_codex_toml_snippet(mcp_base_url, credential, auth_mode=auth_mode)
+        snippet = _build_codex_toml_snippet(
+            mcp_base_url, credential, auth_mode=auth_mode, scope_env=scope_env
+        )
     else:
         if auth_mode == "oauth":
             header_fragment = (
@@ -221,17 +256,35 @@ def eve_toml_entry_has_unknown_fields(config_path: Path) -> bool:
     section = _extract_toml_section(config_path.read_text(encoding="utf-8"))
     if not section:
         return False
-    allowed_prefixes = {
-        "url =",
-        "startup_timeout_sec =",
-        "env_http_headers = {",
-        "bearer_token_env_var =",
-        '[mcp_servers."eve-memory".http_headers]',
-    }
+    if _toml_scope_env_has_unknown_fields(config_path):
+        return True
+    current_subtable: str | None = None
     for raw_line in section.splitlines()[1:]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
+        if line == '[mcp_servers."eve-memory".http_headers]':
+            current_subtable = "http_headers"
+            continue
+        if line == '[mcp_servers."eve-memory".env]':
+            current_subtable = "env"
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            return True
+        if current_subtable == "env":
+            key = line.split("=", 1)[0].strip()
+            if key not in _SCOPE_ENV_KEYS_SET:
+                return True
+            continue
+        allowed_prefixes = {
+            "url =",
+            "startup_timeout_sec =",
+            "env_http_headers = {",
+            "bearer_token_env_var =",
+            "X-API-Key =",
+            "X-Source-Agent =",
+            "Authorization =",
+        }
         if not any(line.startswith(prefix) for prefix in allowed_prefixes):
             return True
         if line.startswith("env_http_headers = {"):
@@ -245,7 +298,11 @@ def eve_toml_entry_has_unknown_fields(config_path: Path) -> bool:
 
 
 def _build_codex_toml_snippet(
-    mcp_base_url: str, credential: str | None, *, auth_mode: AuthMode
+    mcp_base_url: str,
+    credential: str | None,
+    *,
+    auth_mode: AuthMode,
+    scope_env: dict[str, str] | None = None,
 ) -> str:
     lines = [
         f"{TOML_SECTION_HEADER}",
@@ -270,7 +327,76 @@ def _build_codex_toml_snippet(
                 f'X-Source-Agent = "{_source_agent("codex-cli")}"',
             ]
         )
+    env = _clean_scope_env(scope_env)
+    if env:
+        lines.extend(["", '[mcp_servers."eve-memory".env]'])
+        lines.extend(f"{key} = {json.dumps(value)}" for key, value in env.items())
     return "\n".join(lines) + "\n"
+
+
+def scope_env_drift(
+    config_path: Path,
+    tool: ToolName,
+    expected_env: dict[str, str],
+) -> list[str]:
+    """Return Eve scope env keys whose installed value differs from expected config."""
+    actual = _installed_scope_env(config_path, tool)
+    return [
+        key
+        for key in SCOPE_ENV_KEYS
+        if (key in expected_env or key in actual) and actual.get(key) != expected_env.get(key)
+    ]
+
+
+def _installed_scope_env(config_path: Path, tool: ToolName) -> dict[str, str]:
+    if not config_path.exists():
+        return {}
+    if tool == "codex-cli":
+        try:
+            parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError:
+            return {}
+        env = _scope_env_node(parsed, "mcp_servers")
+    else:
+        try:
+            parsed = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+        env = _scope_env_node(parsed, "mcpServers")
+    if not isinstance(env, dict):
+        return {}
+    return {
+        key: value
+        for key, value in env.items()
+        if key in _SCOPE_ENV_KEYS_SET and isinstance(value, str)
+    }
+
+
+def _scope_env_node(parsed: Any, server_key: str) -> Any:
+    if not isinstance(parsed, dict):
+        return {}
+    servers = parsed.get(server_key, {})
+    if not isinstance(servers, dict):
+        return {}
+    entry = servers.get("eve-memory", {})
+    if not isinstance(entry, dict):
+        return {}
+    return entry.get("env", {})
+
+
+def _toml_scope_env_has_unknown_fields(config_path: Path) -> bool:
+    try:
+        parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return False
+    env = _scope_env_node(parsed, "mcp_servers")
+    if not env:
+        return False
+    if not isinstance(env, dict):
+        return True
+    return not set(env.keys()).issubset(_SCOPE_ENV_KEYS_SET) or any(
+        not isinstance(value, str) for value in env.values()
+    )
 
 
 def remove_toml_config(config_path: Path) -> str:

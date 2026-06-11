@@ -19,10 +19,12 @@ from eve_client.merge import (
     has_eve_json_entry,
     has_eve_toml_entry,
     is_eve_companion_file,
+    scope_env_drift,
     source_agent_header,
 )
 from eve_client.models import DetectedTool, ToolName
 from eve_client.plan import feature_enabled
+from eve_client.scope import scope_env
 from eve_client.tool_state import classify_codex_disabled_state, classify_codex_verify_state
 
 _SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{12,}")
@@ -204,6 +206,7 @@ def verify_tools(
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     auth_overrides = auth_overrides or {}
+    expected_scope_env = scope_env(config.scope)
     for detected in detected_tools:
         companion_path = _companion_path_for_tool(detected, config)
         eve_entry = False
@@ -228,6 +231,9 @@ def verify_tools(
                 companion_path and is_eve_companion_file(companion_path, detected.name)
             ),
             "credential_source": source,
+            "scope_env_expected": expected_scope_env,
+            "scope_env_configured": not expected_scope_env,
+            "scope_env_drift": [],
             "connectivity": {"success": False, "error": "not checked"},
         }
         codex_disabled_state = (
@@ -240,6 +246,13 @@ def verify_tools(
             continue
         eve_entry = _has_eve_config_entry(detected)
         result["eve_configured"] = eve_entry
+        drift = (
+            scope_env_drift(detected.config_path, detected.name, expected_scope_env)
+            if eve_entry
+            else list(expected_scope_env.keys())
+        )
+        result["scope_env_drift"] = drift
+        result["scope_env_configured"] = not drift
         auth_mode = auth_overrides.get(detected.name, "api-key")
         try:
             if auth_mode == "oauth":

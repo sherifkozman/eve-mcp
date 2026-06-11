@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,39 @@ def test_execute_write_config_uses_stored_key(tmp_path: Path) -> None:
     assert '"eve-memory"' in result.content
     assert "eve-secret" in result.content
     assert "/tmp/eve-claude-hook session_start" in result.content
+
+
+def test_execute_write_config_filters_unknown_scope_env_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / ".claude.json"
+    action = PlannedAction(
+        action_id="a2-scope",
+        tool="claude-code",
+        action_type="write_config",
+        path=config_path,
+        summary="write scoped config",
+        scope="global-config",
+        requires_backup=True,
+        requires_confirmation=True,
+        idempotent=True,
+        details={
+            "config_format": "json",
+            "mcp_base_url": "https://mcp.evemem.com",
+            "scope_env": {
+                "EVE_DEFAULT_CONTEXT": "TrackB",
+                "EVE_NOT_ALLOWED": "must-not-write",
+            },
+        },
+    )
+    result = execute_operation(
+        OperationContext(
+            config=_config(tmp_path),
+            credentials=_CredentialStore(api_key="eve-secret"),
+            action=action,
+            api_key=None,
+        )
+    )
+    env = json.loads(result.content)["mcpServers"]["eve-memory"]["env"]
+    assert env == {"EVE_DEFAULT_CONTEXT": "TrackB"}
 
 
 def test_execute_create_companion_appends_to_existing_active_file(tmp_path: Path) -> None:

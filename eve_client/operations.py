@@ -10,6 +10,7 @@ from eve_client.auth.base import CredentialStore
 from eve_client.config import ResolvedConfig
 from eve_client.merge import merge_companion_file, merge_json_config, merge_toml_config
 from eve_client.models import PlannedAction
+from eve_client.scope import SCOPE_ENV_KEYS
 
 
 class OperationError(RuntimeError):
@@ -36,6 +37,18 @@ def _require_path(action: PlannedAction) -> Path:
     if action.path is None:
         raise OperationError(f"{action.action_id} has no path")
     return action.path
+
+
+def _scope_env_from_details(action: PlannedAction) -> dict[str, str]:
+    value = action.details.get("scope_env")
+    if not isinstance(value, dict):
+        return {}
+    allowed_keys = set(SCOPE_ENV_KEYS)
+    return {
+        str(key): item
+        for key, item in value.items()
+        if isinstance(key, str) and key in allowed_keys and isinstance(item, str)
+    }
 
 
 def execute_auth_setup(context: OperationContext) -> RenderedOperation:
@@ -86,6 +99,7 @@ def execute_write_config(context: OperationContext) -> RenderedOperation:
             auth_mode=auth_mode,  # type: ignore[arg-type]
             hook_command=action.details.get("hook_command"),
             hooks_only=action.action_type == "write_hooks_config",
+            scope_env=_scope_env_from_details(action),
         )
     else:
         content = merge_toml_config(
@@ -94,6 +108,7 @@ def execute_write_config(context: OperationContext) -> RenderedOperation:
             action.details["mcp_base_url"],
             credential_to_use,
             auth_mode=auth_mode,  # type: ignore[arg-type]
+            scope_env=_scope_env_from_details(action),
         )
     permissions = path.stat().st_mode & 0o777 if path.exists() else 0o600
     return RenderedOperation(content=content, permissions=permissions)

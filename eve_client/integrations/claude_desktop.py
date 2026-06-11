@@ -24,6 +24,7 @@ class ClaudeDesktopProvider(ToolProvider):
         auth_mode=None,
         prompt_scope=None,
         hooks_enabled=None,
+        scope_env: dict[str, str] | None = None,
     ) -> ToolPlan:
         return ToolPlan(
             tool=self.tool,

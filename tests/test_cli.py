@@ -78,6 +78,36 @@ def test_install_json_output() -> None:
     assert '"tool_plans"' in result.stdout
 
 
+def test_install_dry_run_shows_scope_env_when_configured(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    (tmp_path / "eve.json").write_text(
+        json.dumps(
+            {
+                "scope_version": 1,
+                "visibility": "PERSONAL",
+                "context": "TrackB",
+                "tenant_slug": "acme-team",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+    ):
+        result = runner.invoke(app, ["install", "--tool", "claude-code", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "EVE_DEFAULT_VISIBILITY=<configured>" in result.output
+    assert "EVE_DEFAULT_CONTEXT=<configured>" in result.output
+    assert "EVE_TENANT_SLUG=<configured>" in result.output
+    assert "TrackB" not in result.output
+    assert "acme-team" not in result.output
+
+
 def test_quickstart_json_output() -> None:
     result = runner.invoke(app, ["quickstart", "--json"])
     assert result.exit_code == 0
@@ -621,6 +651,44 @@ def test_repair_command_rebuilds_missing_companion_with_stored_key(
     assert repair.exit_code == 0
     assert "Repaired." in repair.output
     assert (tmp_path / ".gemini" / "GEMINI.md").exists()
+
+
+def test_repair_command_restores_scope_env_drift(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
+    (tmp_path / "eve.json").write_text(
+        json.dumps(
+            {
+                "scope_version": 1,
+                "visibility": "PERSONAL",
+                "context": "TrackB",
+                "tenant_slug": "acme-team",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with (
+        patch("eve_client.detect.base._home", return_value=tmp_path),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+        patched_keyring(),
+    ):
+        install = runner.invoke(
+            app,
+            ["install", "--tool", "claude-code", "--apply", "--yes", "--api-key", "eve-secret"],
+        )
+        config_path = tmp_path / ".claude.json"
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        payload["mcpServers"]["eve-memory"]["env"]["EVE_DEFAULT_CONTEXT"] = "OldProject"
+        config_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+        repair = runner.invoke(app, ["repair", "--tool", "claude-code", "--apply", "--yes"])
+
+    assert install.exit_code == 0
+    assert repair.exit_code == 0
+    repaired = json.loads((tmp_path / ".claude.json").read_text(encoding="utf-8"))
+    assert repaired["mcpServers"]["eve-memory"]["env"]["EVE_DEFAULT_CONTEXT"] == "TrackB"
 
 
 def test_install_command_supports_project_scoped_gemini_prompt(tmp_path: Path, monkeypatch) -> None:

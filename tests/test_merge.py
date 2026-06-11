@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
 from eve_client.merge import (
     companion_content,
+    eve_toml_entry_has_unknown_fields,
     has_eve_claude_hooks,
     has_eve_gemini_hooks,
     has_eve_json_entry,
@@ -15,6 +17,7 @@ from eve_client.merge import (
     merge_toml_config,
     remove_json_config,
     remove_toml_config,
+    scope_env_drift,
 )
 
 
@@ -33,6 +36,27 @@ def test_merge_json_config_adds_eve_entry(tmp_path: Path) -> None:
     assert '"eve-memory"' in merged
     assert '"X-API-Key": "eve-key"' in merged
     assert "/tmp/eve-claude-hook session_start" in merged
+
+
+def test_merge_json_config_adds_scope_env_when_supplied(tmp_path: Path) -> None:
+    config = tmp_path / ".claude.json"
+    merged = merge_json_config(
+        config,
+        "claude-code",
+        "https://mcp.evemem.com",
+        "eve-key",
+        scope_env={
+            "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+            "EVE_DEFAULT_CONTEXT": "TrackB",
+            "EVE_TENANT_SLUG": "acme-team",
+        },
+    )
+    entry = json.loads(merged)["mcpServers"]["eve-memory"]
+    assert entry["env"] == {
+        "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+        "EVE_DEFAULT_CONTEXT": "TrackB",
+        "EVE_TENANT_SLUG": "acme-team",
+    }
 
 
 def test_merge_json_config_oauth_omits_bearer_when_not_supplied(tmp_path: Path) -> None:
@@ -76,6 +100,55 @@ def test_merge_toml_config_preserves_other_entries(tmp_path: Path) -> None:
     assert parsed["mcp_servers"]["eve-memory"]["url"] == "https://mcp.evemem.com"
     assert parsed["mcp_servers"]["eve-memory"]["startup_timeout_sec"] == 60
     assert parsed["mcp_servers"]["eve-memory"]["http_headers"]["X-API-Key"] == "eve-key"
+
+
+def test_merge_toml_config_adds_scope_env_when_supplied(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    merged = merge_toml_config(
+        config,
+        "codex-cli",
+        "https://mcp.evemem.com",
+        "eve-key",
+        scope_env={
+            "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+            "EVE_DEFAULT_CONTEXT": "TrackB",
+            "EVE_TENANT_SLUG": "acme-team",
+        },
+    )
+    parsed = tomllib.loads(merged)
+    assert parsed["mcp_servers"]["eve-memory"]["env"] == {
+        "EVE_DEFAULT_VISIBILITY": "PERSONAL",
+        "EVE_DEFAULT_CONTEXT": "TrackB",
+        "EVE_TENANT_SLUG": "acme-team",
+    }
+
+
+def test_scope_env_drift_handles_non_object_json_nodes(tmp_path: Path) -> None:
+    config = tmp_path / ".claude.json"
+    config.write_text('{"mcpServers": {"eve-memory": []}}', encoding="utf-8")
+    assert scope_env_drift(
+        config,
+        "claude-code",
+        {"EVE_DEFAULT_VISIBILITY": "PERSONAL"},
+    ) == ["EVE_DEFAULT_VISIBILITY"]
+
+
+def test_scope_env_drift_handles_non_string_toml_env_values(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[mcp_servers."eve-memory"]\n'
+        'url = "https://mcp.evemem.com"\n'
+        '\n'
+        '[mcp_servers."eve-memory".env]\n'
+        "EVE_DEFAULT_CONTEXT = 123\n",
+        encoding="utf-8",
+    )
+    assert eve_toml_entry_has_unknown_fields(config) is True
+    assert scope_env_drift(
+        config,
+        "codex-cli",
+        {"EVE_DEFAULT_CONTEXT": "TrackB"},
+    ) == ["EVE_DEFAULT_CONTEXT"]
 
 
 def test_merge_toml_config_oauth_omits_bearer_when_not_supplied(tmp_path: Path) -> None:

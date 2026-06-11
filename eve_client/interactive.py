@@ -170,6 +170,11 @@ def preview_and_confirm(plan: InstallPlan) -> bool:
         for action in tool_plan.actions:
             path_str = f" -> {action.path}" if action.path else ""
             console.print(f"  - {action.summary}{path_str}")
+            scope_env = action.details.get("scope_env")
+            if isinstance(scope_env, dict):
+                for key, value in scope_env.items():
+                    if isinstance(key, str) and isinstance(value, str):
+                        console.print(f"    scope env: {key}=<configured>")
         console.print()
 
     return Confirm.ask("Apply this plan?", default=False)
