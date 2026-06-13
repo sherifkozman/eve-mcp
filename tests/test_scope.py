@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from eve_client.scope import ResolvedScope, resolve_scope
+from eve_client.scope import resolve_scope, scope_env
 
 
 def test_resolve_scope_returns_none_without_file_or_env(
@@ -43,16 +43,50 @@ def test_resolve_scope_uses_nearest_eve_json(
 
     scope = resolve_scope(inner.parent / "src")
 
-    assert scope == ResolvedScope(
-        visibility="SHARED",
-        context="Team_Project",
-        tenant_slug="acme-team",
-    )
+    assert scope is not None
+    assert scope.visibility == "SHARED"
+    assert scope.context == "Team_Project"
+    assert scope.tenant_slug == "acme-team"
+    assert len(scope.project_id or "") == 64
+    assert len(scope.config_hash or "") == 64
     assert scope.trust_confirmed is False
     assert scope.requires_trust_confirmation() is True
     assert not hasattr(scope, "as_payload")
     assert not hasattr(scope, "as_headers")
     assert not hasattr(scope, "as_env")
+
+
+def test_file_scope_exports_project_confirmation_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("EVE_DEFAULT_VISIBILITY", raising=False)
+    monkeypatch.delenv("EVE_DEFAULT_CONTEXT", raising=False)
+    monkeypatch.delenv("EVE_TENANT_SLUG", raising=False)
+    monkeypatch.setattr("eve_client.scope.Path.home", lambda: tmp_path)
+    project = tmp_path / "workspace" / "project"
+    project.mkdir(parents=True)
+    (project / "eve.json").write_text(
+        json.dumps(
+            {
+                "scope_version": 1,
+                "visibility": "SHARED",
+                "context": "TEAM",
+                "tenant_slug": "acme-team",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_scope(project / "src")
+
+    assert resolved is not None
+    rendered = scope_env(resolved)
+    assert rendered["EVE_DEFAULT_VISIBILITY"] == "SHARED"
+    assert rendered["EVE_DEFAULT_CONTEXT"] == "TEAM"
+    assert rendered["EVE_TENANT_SLUG"] == "acme-team"
+    assert len(rendered["EVE_SCOPE_PROJECT_ID"]) == 64
+    assert len(rendered["EVE_SCOPE_CONFIG_HASH"]) == 64
 
 
 def test_resolve_scope_env_overrides_file(
@@ -74,11 +108,14 @@ def test_resolve_scope_env_overrides_file(
     monkeypatch.setenv("EVE_DEFAULT_CONTEXT", "env_context")
     monkeypatch.setenv("EVE_TENANT_SLUG", "env-tenant")
 
-    assert resolve_scope(tmp_path) == ResolvedScope(
-        visibility="PERSONAL",
-        context="env_context",
-        tenant_slug="env-tenant",
-    )
+    scope = resolve_scope(tmp_path)
+
+    assert scope is not None
+    assert scope.visibility == "PERSONAL"
+    assert scope.context == "env_context"
+    assert scope.tenant_slug == "env-tenant"
+    assert len(scope.project_id or "") == 64
+    assert len(scope.config_hash or "") == 64
 
 
 def test_resolve_scope_tenant_slug_only_does_not_resolve(
@@ -108,10 +145,13 @@ def test_resolve_scope_env_tenant_slug_can_join_file_scope(
     monkeypatch.delenv("EVE_DEFAULT_VISIBILITY", raising=False)
     monkeypatch.delenv("EVE_DEFAULT_CONTEXT", raising=False)
 
-    assert resolve_scope(tmp_path) == ResolvedScope(
-        visibility="SHARED",
-        tenant_slug="env-acme",
-    )
+    scope = resolve_scope(tmp_path)
+
+    assert scope is not None
+    assert scope.visibility == "SHARED"
+    assert scope.tenant_slug == "env-acme"
+    assert len(scope.project_id or "") == 64
+    assert len(scope.config_hash or "") == 64
 
 
 def test_resolve_scope_invalid_file_visibility_fails_open_to_none(
@@ -142,7 +182,12 @@ def test_resolve_scope_invalid_env_value_is_absent_and_file_can_apply(
     )
     monkeypatch.setenv("EVE_DEFAULT_VISIBILITY", "GLOBAL")
 
-    assert resolve_scope(tmp_path) == ResolvedScope(visibility="SHARED")
+    scope = resolve_scope(tmp_path)
+
+    assert scope is not None
+    assert scope.visibility == "SHARED"
+    assert len(scope.project_id or "") == 64
+    assert len(scope.config_hash or "") == 64
     assert "Invalid EVE_DEFAULT_VISIBILITY" in capsys.readouterr().err
 
 
@@ -198,7 +243,12 @@ def test_resolve_scope_accepts_numeric_scope_version_one(
         encoding="utf-8",
     )
 
-    assert resolve_scope(tmp_path) == ResolvedScope(visibility="PERSONAL")
+    scope = resolve_scope(tmp_path)
+
+    assert scope is not None
+    assert scope.visibility == "PERSONAL"
+    assert len(scope.project_id or "") == 64
+    assert len(scope.config_hash or "") == 64
 
 
 def test_resolve_scope_rejects_unsupported_scope_version(

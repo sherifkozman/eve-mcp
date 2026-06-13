@@ -15,7 +15,6 @@ from eve_client.config import (
     resolve_config,
     update_local_config,
 )
-from eve_client.scope import ResolvedScope
 
 
 def test_resolve_config_uses_default(monkeypatch, tmp_path: Path) -> None:
@@ -85,7 +84,11 @@ def test_resolve_config_includes_project_scope(monkeypatch, tmp_path: Path) -> N
 
     config = resolve_config()
 
-    assert config.scope == ResolvedScope(visibility="SHARED", context="team")
+    assert config.scope is not None
+    assert config.scope.visibility == "SHARED"
+    assert config.scope.context == "team"
+    assert len(config.scope.project_id or "") == 64
+    assert len(config.scope.config_hash or "") == 64
 
 
 def test_resolve_config_honors_legacy_feature_codex_cli_key(monkeypatch, tmp_path: Path) -> None:

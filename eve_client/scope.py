@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -15,7 +16,15 @@ MAX_SCOPE_CONFIG_BYTES = 64 * 1024
 VISIBILITY_ENV_VAR = "EVE_DEFAULT_VISIBILITY"
 CONTEXT_ENV_VAR = "EVE_DEFAULT_CONTEXT"
 TENANT_SLUG_ENV_VAR = "EVE_TENANT_SLUG"
-SCOPE_ENV_KEYS = (VISIBILITY_ENV_VAR, CONTEXT_ENV_VAR, TENANT_SLUG_ENV_VAR)
+PROJECT_ID_ENV_VAR = "EVE_SCOPE_PROJECT_ID"
+CONFIG_HASH_ENV_VAR = "EVE_SCOPE_CONFIG_HASH"
+SCOPE_ENV_KEYS = (
+    VISIBILITY_ENV_VAR,
+    CONTEXT_ENV_VAR,
+    TENANT_SLUG_ENV_VAR,
+    PROJECT_ID_ENV_VAR,
+    CONFIG_HASH_ENV_VAR,
+)
 
 _CONTEXT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,99}$")
 _TENANT_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
@@ -33,6 +42,8 @@ class ResolvedScope:
     visibility: str | None = None
     context: str | None = None
     tenant_slug: str | None = None
+    project_id: str | None = None
+    config_hash: str | None = None
     trust_confirmed: bool = False
 
     def has_scope_default(self) -> bool:
@@ -134,7 +145,12 @@ def _payload_field_is_invalid(raw_value: object, normalized_value: str | None) -
 
 
 def _scope_from_payload(
-    payload: dict[str, Any], *, source: str, fail_entire_payload_on_invalid: bool = False
+    payload: dict[str, Any],
+    *,
+    source: str,
+    fail_entire_payload_on_invalid: bool = False,
+    project_id: str | None = None,
+    config_hash: str | None = None,
 ) -> ResolvedScope | None:
     raw_visibility = payload.get("visibility")
     raw_context = payload.get("context")
@@ -152,6 +168,8 @@ def _scope_from_payload(
         visibility=visibility,
         context=context,
         tenant_slug=tenant_slug,
+        project_id=project_id,
+        config_hash=config_hash,
     )
     if not scope.has_any_value():
         return None
@@ -166,7 +184,8 @@ def _load_file_scope(cwd: Path) -> ResolvedScope | None:
         if path.stat().st_size > MAX_SCOPE_CONFIG_BYTES:
             _warn(f"Ignoring {path}: file is too large")
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_text = path.read_text(encoding="utf-8")
+        payload = json.loads(raw_text)
     except (OSError, json.JSONDecodeError):
         _warn(f"Ignoring malformed {SCOPE_CONFIG_FILENAME} at {path}")
         return None
@@ -181,7 +200,15 @@ def _load_file_scope(cwd: Path) -> ResolvedScope | None:
     ):
         _warn(f"Ignoring {path}: unsupported scope_version")
         return None
-    return _scope_from_payload(payload, source=str(path), fail_entire_payload_on_invalid=True)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    project_root = path.parent.resolve()
+    return _scope_from_payload(
+        payload,
+        source=str(path),
+        fail_entire_payload_on_invalid=True,
+        project_id=hashlib.sha256(str(project_root).encode("utf-8")).hexdigest(),
+        config_hash=hashlib.sha256(canonical).hexdigest(),
+    )
 
 
 def _env_scope() -> ResolvedScope | None:
@@ -212,6 +239,8 @@ def resolve_scope(cwd: Path | str | None = None) -> ResolvedScope | None:
         visibility=env_scope.visibility or file_scope.visibility,
         context=env_scope.context or file_scope.context,
         tenant_slug=env_scope.tenant_slug or file_scope.tenant_slug,
+        project_id=file_scope.project_id,
+        config_hash=file_scope.config_hash,
     )
     return merged if merged.has_scope_default() else None
 
@@ -227,4 +256,8 @@ def scope_env(scope: ResolvedScope | None) -> dict[str, str]:
         env[CONTEXT_ENV_VAR] = scope.context
     if scope.tenant_slug:
         env[TENANT_SLUG_ENV_VAR] = scope.tenant_slug
+    if scope.project_id:
+        env[PROJECT_ID_ENV_VAR] = scope.project_id
+    if scope.config_hash:
+        env[CONFIG_HASH_ENV_VAR] = scope.config_hash
     return env
