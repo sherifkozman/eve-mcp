@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/packages/client"
 OUT_DIR="${EVE_CLIENT_RELEASE_OUT_DIR:-$ROOT_DIR/release/eve-client}"
-PYINSTALLER="${EVE_CLIENT_PYINSTALLER:-uv run --package eve-client --python 3.11 --with pyinstaller pyinstaller}"
+PYINSTALLER="${EVE_CLIENT_PYINSTALLER:-uv run --package eve-memory-client --python 3.11 --with pyinstaller pyinstaller}"
 
 VERSION="$(python3 - <<'PY'
 from pathlib import Path
@@ -26,8 +26,8 @@ mkdir -p "$DIST_DIR" "$BIN_DIR" "$ARCHIVE_DIR" "$BUILD_DIR"
 cd "$ROOT_DIR"
 
 uv build "$PACKAGE_DIR"
-cp dist/eve_client-"$VERSION".tar.gz "$DIST_DIR/"
-cp dist/eve_client-"$VERSION"-py3-none-any.whl "$DIST_DIR/"
+cp dist/eve_memory_client-"$VERSION".tar.gz "$DIST_DIR/"
+cp dist/eve_memory_client-"$VERSION"-py3-none-any.whl "$DIST_DIR/"
 
 build_binary() {
   local name="$1"
@@ -53,8 +53,8 @@ build_binary "eve-claude-hook" "$PACKAGE_DIR/eve_client/claude_hook_entry.py"
 build_binary "eve-gemini-hook" "$PACKAGE_DIR/eve_client/gemini_hook_entry.py"
 
 cp "$PACKAGE_DIR/README.md" "$ARCHIVE_DIR/README.md"
-cp "$DIST_DIR"/eve_client-"$VERSION".tar.gz "$ARCHIVE_DIR/"
-cp "$DIST_DIR"/eve_client-"$VERSION"-py3-none-any.whl "$ARCHIVE_DIR/"
+cp "$DIST_DIR"/eve_memory_client-"$VERSION".tar.gz "$ARCHIVE_DIR/"
+cp "$DIST_DIR"/eve_memory_client-"$VERSION"-py3-none-any.whl "$ARCHIVE_DIR/"
 cp "$BIN_DIR"/eve "$ARCHIVE_DIR/"
 cp "$BIN_DIR"/eve-claude-hook "$ARCHIVE_DIR/"
 cp "$BIN_DIR"/eve-gemini-hook "$ARCHIVE_DIR/"
@@ -66,8 +66,8 @@ cp "$BIN_DIR"/eve-gemini-hook "$ARCHIVE_DIR/"
     eve \
     eve-claude-hook \
     eve-gemini-hook \
-    eve_client-"$VERSION".tar.gz \
-    eve_client-"$VERSION"-py3-none-any.whl
+    eve_memory_client-"$VERSION".tar.gz \
+    eve_memory_client-"$VERSION"-py3-none-any.whl
 )
 
 echo "Built Eve client release artifacts in $OUT_DIR"

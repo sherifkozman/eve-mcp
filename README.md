@@ -122,13 +122,13 @@ See [`examples/`](./examples/) for ready-to-paste MCP config snippets for Claude
 Once published, the package install will become:
 
 ```bash
-uv tool install eve-client
+uv tool install eve-memory-client
 ```
 
 or:
 
 ```bash
-pipx install eve-client
+pipx install eve-memory-client
 ```
 
 ## What Eve Client Does

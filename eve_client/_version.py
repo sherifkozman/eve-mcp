@@ -20,7 +20,7 @@ def resolve_version() -> str:
     if build_version:
         return build_version
     try:
-        return installed_version("eve-client")
+        return installed_version("eve-memory-client")
     except PackageNotFoundError:
         return _version_from_pyproject() or "0.0.0+unknown"
 

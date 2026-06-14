@@ -3,16 +3,19 @@ from __future__ import annotations
 import os
 import subprocess
 import tarfile
+import tomllib
 import venv
 import zipfile
-from importlib.metadata import version as installed_version
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_ROOT = REPO_ROOT / "packages" / "client"
 INSTALL_SCRIPT = PACKAGE_ROOT / "scripts" / "install-eve-client.sh"
+STANDALONE_INSTALL_SCRIPT = PACKAGE_ROOT / "install.sh"
 PUBLISH_SCRIPT = PACKAGE_ROOT / "scripts" / "publish-eve-client-pypi.sh"
 PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-eve-client.yml"
+PYPI_DISTRIBUTION = "eve-memory-client"
+DIST_FILE_PREFIX = "eve_memory_client"
 
 
 def _run(
@@ -28,21 +31,47 @@ def _run(
     )
 
 
+def _package_version() -> str:
+    data = tomllib.loads((PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return str(data["project"]["version"])
+
+
+def _write_fake_uv(bin_dir: Path, installed_bin_dir: Path, command_log: Path) -> None:
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [ \"$1\" = \"tool\" ] && [ \"$2\" = \"dir\" ] && [ \"$3\" = \"--bin\" ]; then\n"
+        "  printf '%s\\n' \"$EVE_FAKE_UV_BIN_DIR\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (installed_bin_dir / "eve").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"$1\" = \"version\" ]; then echo \"$EVE_FAKE_EVE_VERSION\"; else echo \"$@\"; fi\n",
+        encoding="utf-8",
+    )
+    (installed_bin_dir / "eve").chmod(0o755)
+
+
 def test_built_wheel_contains_expected_runtime_files(tmp_path: Path) -> None:
     dist_dir = tmp_path / "dist"
     _run("uv", "build", str(PACKAGE_ROOT), "--out-dir", str(dist_dir))
-    wheel_path = next(dist_dir.glob("eve_client-*.whl"))
-    package_version = installed_version("eve-client")
+    wheel_path = next(dist_dir.glob(f"{DIST_FILE_PREFIX}-*.whl"))
+    package_version = _package_version()
 
     with zipfile.ZipFile(wheel_path) as wheel:
         names = set(wheel.namelist())
-        dist_info = f"eve_client-{package_version}.dist-info"
+        dist_info = f"{DIST_FILE_PREFIX}-{package_version}.dist-info"
         entry_points = wheel.read(f"{dist_info}/entry_points.txt").decode("utf-8")
         metadata = wheel.read(f"{dist_info}/METADATA").decode("utf-8")
 
     assert "eve_client/__main__.py" in names
     assert "eve_client/cli.py" in names
     assert "eve_client/tests/test_cli.py" not in names
+    assert f"Name: {PYPI_DISTRIBUTION}" in metadata
     assert "eve = eve_client.cli:main" in entry_points
     assert f"Version: {package_version}" in metadata
 
@@ -50,12 +79,12 @@ def test_built_wheel_contains_expected_runtime_files(tmp_path: Path) -> None:
 def test_built_sdist_contains_readme_and_package_sources(tmp_path: Path) -> None:
     dist_dir = tmp_path / "dist"
     _run("uv", "build", str(PACKAGE_ROOT), "--out-dir", str(dist_dir))
-    sdist_path = next(dist_dir.glob("eve_client-*.tar.gz"))
+    sdist_path = next(dist_dir.glob(f"{DIST_FILE_PREFIX}-*.tar.gz"))
 
     with tarfile.open(sdist_path, "r:gz") as sdist:
         names = set(sdist.getnames())
 
-    root_prefix = f"eve_client-{installed_version('eve-client')}"
+    root_prefix = f"{DIST_FILE_PREFIX}-{_package_version()}"
     assert f"{root_prefix}/README.md" in names
     assert f"{root_prefix}/pyproject.toml" in names
     assert f"{root_prefix}/eve_client/__main__.py" in names
@@ -64,7 +93,7 @@ def test_built_sdist_contains_readme_and_package_sources(tmp_path: Path) -> None
 def test_installed_wheel_exposes_eve_entrypoint_and_module_entrypoint(tmp_path: Path) -> None:
     dist_dir = tmp_path / "dist"
     _run("uv", "build", str(PACKAGE_ROOT), "--out-dir", str(dist_dir))
-    wheel_path = next(dist_dir.glob("eve_client-*.whl"))
+    wheel_path = next(dist_dir.glob(f"{DIST_FILE_PREFIX}-*.whl"))
 
     venv_dir = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True, system_site_packages=True).create(venv_dir)
@@ -76,29 +105,46 @@ def test_installed_wheel_exposes_eve_entrypoint_and_module_entrypoint(tmp_path: 
     eve_result = _run(str(venv_eve), "version", cwd=tmp_path)
     module_result = _run(str(venv_python), "-m", "eve_client", "version", cwd=tmp_path)
 
-    expected = installed_version("eve-client")
+    expected = _package_version()
     assert eve_result.stdout.strip() == expected
     assert module_result.stdout.strip() == expected
 
 
-def test_install_script_installs_local_package_and_verifies_binary_with_explicit_shadow_override(
+def test_installers_use_fixed_pypi_distribution_without_source_or_flag_overrides() -> None:
+    for script_path in (INSTALL_SCRIPT, STANDALONE_INSTALL_SCRIPT):
+        script = script_path.read_text(encoding="utf-8")
+
+        assert "eve-memory-client" in script
+        assert "EVE_CLIENT_SOURCE" not in script
+        assert "EVE_CLIENT_INSTALL_FLAGS" not in script
+        assert "EVE_CLIENT_BINARY" not in script
+        assert "EVE_CLIENT_ALLOW_SHADOWED_BINARY" not in script
+        assert "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY" not in script
+
+    standalone_script = STANDALONE_INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert "curl -LsSf https://astral.sh/uv/install.sh | sh" not in standalone_script
+
+
+def test_install_script_installs_fixed_package_and_ignores_source_flag_overrides(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
+    installed_bin = tmp_path / "installed-bin"
+    command_log = tmp_path / "commands.log"
     home.mkdir()
-    cache.mkdir()
     fake_bin.mkdir()
-    (fake_bin / "eve").write_text("#!/usr/bin/env bash\necho fake-eve\n", encoding="utf-8")
-    (fake_bin / "eve").chmod(0o755)
+    installed_bin.mkdir()
+    _write_fake_uv(fake_bin, installed_bin, command_log)
     env = {
         "HOME": str(home),
-        "UV_CACHE_DIR": str(cache),
-        "EVE_CLIENT_SOURCE": str(PACKAGE_ROOT),
-        "EVE_CLIENT_INSTALL_FLAGS": "--force",
-        "EVE_CLIENT_ALLOW_SHADOWED_BINARY": "1",
-        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "EVE_CLIENT_SOURCE": "git+https://attacker.example/eve-client.git",
+        "EVE_CLIENT_INSTALL_FLAGS": "--index-url https://attacker.example/simple",
+        "EVE_CLIENT_BINARY": "not-eve",
+        "EVE_FAKE_EVE_VERSION": _package_version(),
+        "EVE_FAKE_UV_BIN_DIR": str(installed_bin),
+        "EVE_TEST_COMMAND_LOG": str(command_log),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
     }
 
     install_result = subprocess.run(
@@ -109,37 +155,28 @@ def test_install_script_installs_local_package_and_verifies_binary_with_explicit
         check=True,
         env={**os.environ, **env},
     )
-    uv_bin_dir = _run(
-        "uv", "tool", "dir", "--bin", cwd=REPO_ROOT, env={**os.environ, **env}
-    ).stdout.strip()
-    eve_binary = Path(uv_bin_dir) / "eve"
+    eve_binary = installed_bin / "eve"
 
     assert "Installed executable:" in install_result.stdout
     assert str(eve_binary) in install_result.stdout
-    assert eve_binary.exists()
-    assert "SECURITY WARNING:" in install_result.stderr
-    assert "currently resolves eve to" in install_result.stderr
-    assert "Proceeding because EVE_CLIENT_ALLOW_SHADOWED_BINARY=1 is set." in install_result.stderr
-    version_result = subprocess.run(
-        [str(eve_binary), "version"],
-        cwd=str(REPO_ROOT),
-        text=True,
-        capture_output=True,
-        check=True,
-        env={**os.environ, **env},
-    )
-    assert version_result.stdout.strip() == installed_version("eve-client")
+    assert "SECURITY WARNING:" not in install_result.stderr
+    command_log_text = command_log.read_text(encoding="utf-8")
+    assert "uv tool install eve-memory-client" in command_log_text
+    assert "attacker.example" not in command_log_text
+    assert "--index-url" not in command_log_text
 
 
 def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
+    installed_bin = tmp_path / "installed-bin"
+    command_log = tmp_path / "commands.log"
     home.mkdir()
-    cache.mkdir()
     fake_bin.mkdir()
+    installed_bin.mkdir()
+    _write_fake_uv(fake_bin, installed_bin, command_log)
     (fake_bin / "eve").write_text("#!/usr/bin/env bash\necho fake-eve\n", encoding="utf-8")
     (fake_bin / "eve").chmod(0o755)
 
@@ -151,9 +188,10 @@ def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(
         env={
             **os.environ,
             "HOME": str(home),
-            "UV_CACHE_DIR": str(cache),
-            "EVE_CLIENT_SOURCE": str(PACKAGE_ROOT),
-            "EVE_CLIENT_INSTALL_FLAGS": "--force",
+            "EVE_CLIENT_BINARY": "not-eve",
+            "EVE_FAKE_EVE_VERSION": _package_version(),
+            "EVE_FAKE_UV_BIN_DIR": str(installed_bin),
+            "EVE_TEST_COMMAND_LOG": str(command_log),
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
         },
     )
@@ -164,76 +202,57 @@ def test_install_script_fails_closed_on_shadowed_binary_in_non_interactive_mode(
         "Aborting because a conflicting eve binary is ahead of the installed one on PATH."
         in result.stderr
     )
-    assert "EVE_CLIENT_ALLOW_SHADOWED_BINARY=1" in result.stderr
+    assert "Update PATH so the installed Eve client comes first" in result.stderr
 
 
-def test_install_script_can_still_force_fail_on_shadowed_binary_override_path(
+def test_standalone_install_script_fails_closed_on_shadowed_binary(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    cache = tmp_path / "cache"
     fake_bin = tmp_path / "fake-bin"
+    shadow_bin = tmp_path / "shadow-bin"
+    installed_bin = tmp_path / "installed-bin"
+    command_log = tmp_path / "commands.log"
     home.mkdir()
-    cache.mkdir()
     fake_bin.mkdir()
-    (fake_bin / "eve").write_text("#!/usr/bin/env bash\necho fake-eve\n", encoding="utf-8")
-    (fake_bin / "eve").chmod(0o755)
+    shadow_bin.mkdir()
+    installed_bin.mkdir()
+    _write_fake_uv(fake_bin, installed_bin, command_log)
+    (shadow_bin / "eve").write_text("#!/usr/bin/env bash\necho shadow-eve\n", encoding="utf-8")
+    (shadow_bin / "eve").chmod(0o755)
 
     result = subprocess.run(
-        ["bash", str(INSTALL_SCRIPT)],
+        ["bash", str(STANDALONE_INSTALL_SCRIPT)],
         cwd=str(REPO_ROOT),
         text=True,
         capture_output=True,
         env={
             **os.environ,
             "HOME": str(home),
-            "UV_CACHE_DIR": str(cache),
-            "EVE_CLIENT_SOURCE": str(PACKAGE_ROOT),
-            "EVE_CLIENT_INSTALL_FLAGS": "--force",
-            "EVE_CLIENT_ALLOW_SHADOWED_BINARY": "1",
-            "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY": "1",
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "EVE_CLIENT_BINARY": "not-eve",
+            "EVE_FAKE_EVE_VERSION": _package_version(),
+            "EVE_FAKE_UV_BIN_DIR": str(installed_bin),
+            "EVE_TEST_COMMAND_LOG": str(command_log),
+            "PATH": f"{fake_bin}:{shadow_bin}:{os.environ['PATH']}",
         },
     )
 
     assert result.returncode != 0
     assert "SECURITY WARNING:" in result.stderr
-    assert (
-        "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 overrides EVE_CLIENT_ALLOW_SHADOWED_BINARY=1."
-        in result.stderr
-    )
-    assert "Aborting because EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 is set." in result.stderr
+    assert "Aborting because a conflicting eve binary is ahead of the installed one on PATH." in result.stderr
 
 
-def test_install_script_force_fail_env_blocks_shadowed_binary_without_allow(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    cache = tmp_path / "cache"
-    fake_bin = tmp_path / "fake-bin"
-    home.mkdir()
-    cache.mkdir()
-    fake_bin.mkdir()
-    (fake_bin / "eve").write_text("#!/usr/bin/env bash\necho fake-eve\n", encoding="utf-8")
-    (fake_bin / "eve").chmod(0o755)
-
+def test_standalone_install_script_rejects_piped_execution() -> None:
     result = subprocess.run(
-        ["bash", str(INSTALL_SCRIPT)],
+        ["sh"],
         cwd=str(REPO_ROOT),
         text=True,
+        input=STANDALONE_INSTALL_SCRIPT.read_text(encoding="utf-8"),
         capture_output=True,
-        env={
-            **os.environ,
-            "HOME": str(home),
-            "UV_CACHE_DIR": str(cache),
-            "EVE_CLIENT_SOURCE": str(PACKAGE_ROOT),
-            "EVE_CLIENT_INSTALL_FLAGS": "--force",
-            "EVE_CLIENT_FAIL_ON_SHADOWED_BINARY": "1",
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-        },
     )
 
     assert result.returncode != 0
-    assert "SECURITY WARNING:" in result.stderr
-    assert "Aborting because EVE_CLIENT_FAIL_ON_SHADOWED_BINARY=1 is set." in result.stderr
+    assert "Do not pipe this installer directly to sh." in result.stderr
 
 
 def test_publish_script_dry_run_checks_artifacts_without_uploading(tmp_path: Path) -> None:
@@ -243,8 +262,8 @@ def test_publish_script_dry_run_checks_artifacts_without_uploading(tmp_path: Pat
     log_path = tmp_path / "commands.log"
     dist_dir.mkdir()
     bin_dir.mkdir()
-    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
-    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
     (bin_dir / "uv").write_text(
         "#!/usr/bin/env bash\n"
         "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
@@ -291,8 +310,8 @@ def test_publish_script_default_mode_checks_artifacts_without_uploading(tmp_path
     log_path = tmp_path / "commands.log"
     dist_dir.mkdir()
     bin_dir.mkdir()
-    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
-    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
     (bin_dir / "uv").write_text(
         "#!/usr/bin/env bash\n"
         "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
@@ -337,8 +356,8 @@ def test_publish_script_requires_token_for_real_publish(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     dist_dir.mkdir()
     bin_dir.mkdir()
-    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
-    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
     (bin_dir / "uvx").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     (bin_dir / "uvx").chmod(0o755)
 
@@ -374,8 +393,8 @@ def test_publish_script_uses_env_token_without_putting_secret_on_command_line(
     log_path = tmp_path / "commands.log"
     dist_dir.mkdir()
     bin_dir.mkdir()
-    (dist_dir / "eve_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
-    (dist_dir / "eve_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
     (bin_dir / "uv").write_text(
         "#!/usr/bin/env bash\n"
         "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
@@ -423,14 +442,14 @@ def test_publish_workflow_dry_runs_on_pr_and_publishes_only_on_release_tag() -> 
     publish_job = "  publish:" + workflow.split("  publish:", 1)[1]
 
     assert "pull_request:" in workflow
-    assert "eve-client@*" in workflow
+    assert "eve-memory-client@*" in workflow
     assert "workflow_dispatch:" not in workflow
     assert "if: github.event_name == 'pull_request'" in dry_run_job
     assert "packages/client/scripts/publish-eve-client-pypi.sh --dry-run" in dry_run_job
     assert "--publish" not in dry_run_job
     assert "PYPI_API_TOKEN" not in dry_run_job
 
-    assert "if: startsWith(github.ref, 'refs/tags/eve-client@')" in publish_job
+    assert "if: startsWith(github.ref, 'refs/tags/eve-memory-client@')" in publish_job
     assert "packages/client/scripts/publish-eve-client-pypi.sh --publish" in publish_job
     assert "--dry-run" not in publish_job
     assert "PYPI_API_TOKEN" in publish_job

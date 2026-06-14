@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage: publish-eve-client-pypi.sh [--dry-run|--publish] [--skip-build] [--dist-dir DIR]
 
-Builds and validates eve-client PyPI artifacts. --dry-run never uploads.
+Builds and validates eve-memory-client PyPI artifacts. --dry-run never uploads.
 --publish uploads existing validated artifacts and requires PYPI_API_TOKEN.
 EOF
 }
@@ -53,16 +53,16 @@ done
 mkdir -p "$DIST_DIR"
 
 if [ "$SKIP_BUILD" != "1" ]; then
-  rm -f "$DIST_DIR"/eve_client-*.tar.gz "$DIST_DIR"/eve_client-*-py3-none-any.whl
+  rm -f "$DIST_DIR"/eve_memory_client-*.tar.gz "$DIST_DIR"/eve_memory_client-*-py3-none-any.whl
   uv build "$PACKAGE_DIR" --out-dir "$DIST_DIR"
 fi
 
 shopt -s nullglob
-ARTIFACTS=("$DIST_DIR"/eve_client-*.tar.gz "$DIST_DIR"/eve_client-*-py3-none-any.whl)
+ARTIFACTS=("$DIST_DIR"/eve_memory_client-*.tar.gz "$DIST_DIR"/eve_memory_client-*-py3-none-any.whl)
 shopt -u nullglob
 
 if [ "${#ARTIFACTS[@]}" -lt 2 ]; then
-  echo "Expected eve-client sdist and wheel in $DIST_DIR" >&2
+  echo "Expected eve-memory-client sdist and wheel in $DIST_DIR" >&2
   exit 1
 fi
 
@@ -74,7 +74,7 @@ if [ "$MODE" = "publish" ]; then
     exit 1
   fi
   UV_PUBLISH_TOKEN="$PYPI_API_TOKEN" uv publish "${ARTIFACTS[@]}"
-  echo "Published eve-client artifacts from $DIST_DIR"
+  echo "Published eve-memory-client artifacts from $DIST_DIR"
 else
-  echo "Dry run complete; not publishing eve-client artifacts from $DIST_DIR"
+  echo "Dry run complete; not publishing eve-memory-client artifacts from $DIST_DIR"
 fi

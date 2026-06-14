@@ -1,5 +1,5 @@
 [project]
-name = "eve-client"
+name = "eve-memory-client"
 version = "0.1.0"
 description = "Eve client installer and local tool integration CLI"
 readme = "README.md"
