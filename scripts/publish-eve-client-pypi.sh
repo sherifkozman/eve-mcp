@@ -69,11 +69,14 @@ fi
 uvx twine check "${ARTIFACTS[@]}"
 
 if [ "$MODE" = "publish" ]; then
-  if [ -z "${PYPI_API_TOKEN:-}" ]; then
-    echo "PYPI_API_TOKEN is required for --publish" >&2
+  if [ -n "${PYPI_API_TOKEN:-}" ]; then
+    UV_PUBLISH_TOKEN="$PYPI_API_TOKEN" uv publish "${ARTIFACTS[@]}"
+  elif [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    uv publish --trusted-publishing always "${ARTIFACTS[@]}"
+  else
+    echo "PYPI_API_TOKEN is required for --publish outside GitHub Actions trusted publishing" >&2
     exit 1
   fi
-  UV_PUBLISH_TOKEN="$PYPI_API_TOKEN" uv publish "${ARTIFACTS[@]}"
   echo "Published eve-memory-client artifacts from $DIST_DIR"
 else
   echo "Dry run complete; not publishing eve-memory-client artifacts from $DIST_DIR"

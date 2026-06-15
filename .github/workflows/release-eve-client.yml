@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "eve-client-v*"
+      - "eve-memory-client@*"
 
 jobs:
   test:

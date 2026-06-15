@@ -119,7 +119,11 @@ See [`examples/`](./examples/) for ready-to-paste MCP config snippets for Claude
 
 ### From PyPI after package publish
 
-Once published, the package install will become:
+The publishable distribution is `eve-memory-client`; `eve-client` is not used
+as the PyPI name because that namespace is occupied by a third party. The next
+release version prepared from this branch is `0.3.0`.
+
+Once published, install with:
 
 ```bash
 uv tool install eve-memory-client
@@ -445,6 +449,9 @@ Build standalone release artifacts:
 ```bash
 bash scripts/build-eve-client-release.sh
 ```
+
+Release tags for the PyPI distribution use `eve-memory-client@<version>`, for
+example `eve-memory-client@0.3.0`.
 
 ## License
 

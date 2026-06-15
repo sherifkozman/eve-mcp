@@ -110,6 +110,30 @@ def test_installed_wheel_exposes_eve_entrypoint_and_module_entrypoint(tmp_path: 
     assert module_result.stdout.strip() == expected
 
 
+def test_installed_wheel_imports_all_default_console_script_modules_in_isolated_venv(
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    _run("uv", "build", str(PACKAGE_ROOT), "--out-dir", str(dist_dir))
+    wheel_path = next(dist_dir.glob(f"{DIST_FILE_PREFIX}-*.whl"))
+
+    venv_dir = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=True).create(venv_dir)
+    venv_python = venv_dir / "bin" / "python"
+
+    _run(str(venv_python), "-m", "pip", "install", str(wheel_path), cwd=tmp_path)
+
+    result = _run(
+        str(venv_python),
+        "-c",
+        "import eve_client.cli; import eve_client.claude_hooks; "
+        "import eve_client.gemini_hooks; import eve_client.server; print('ok')",
+        cwd=tmp_path,
+    )
+
+    assert result.stdout.strip() == "ok"
+
+
 def test_installers_use_fixed_pypi_distribution_without_source_or_flag_overrides() -> None:
     for script_path in (INSTALL_SCRIPT, STANDALONE_INSTALL_SCRIPT):
         script = script_path.read_text(encoding="utf-8")
@@ -381,7 +405,58 @@ def test_publish_script_requires_token_for_real_publish(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert "PYPI_API_TOKEN is required for --publish" in result.stderr
+    assert "PYPI_API_TOKEN is required for --publish outside GitHub Actions" in result.stderr
+
+
+def test_publish_script_uses_trusted_publishing_in_github_actions_without_token(
+    tmp_path: Path,
+) -> None:
+    assert PUBLISH_SCRIPT.exists()
+    dist_dir = tmp_path / "dist"
+    bin_dir = tmp_path / "bin"
+    log_path = tmp_path / "commands.log"
+    dist_dir.mkdir()
+    bin_dir.mkdir()
+    (dist_dir / "eve_memory_client-0.0.0.tar.gz").write_text("sdist", encoding="utf-8")
+    (dist_dir / "eve_memory_client-0.0.0-py3-none-any.whl").write_text("wheel", encoding="utf-8")
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uv \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uvx").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo uvx \"$@\" >> \"$EVE_TEST_COMMAND_LOG\"\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (bin_dir / "uvx").chmod(0o755)
+
+    subprocess.run(
+        [
+            "bash",
+            str(PUBLISH_SCRIPT),
+            "--publish",
+            "--skip-build",
+            "--dist-dir",
+            str(dist_dir),
+        ],
+        cwd=str(REPO_ROOT),
+        text=True,
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "EVE_TEST_COMMAND_LOG": str(log_path),
+            "GITHUB_ACTIONS": "true",
+            "PYPI_API_TOKEN": "",
+        },
+    )
+
+    command_log = log_path.read_text(encoding="utf-8")
+    assert "uv publish --trusted-publishing always" in command_log
+    assert "secret-token" not in command_log
 
 
 def test_publish_script_uses_env_token_without_putting_secret_on_command_line(
@@ -452,4 +527,5 @@ def test_publish_workflow_dry_runs_on_pr_and_publishes_only_on_release_tag() -> 
     assert "if: startsWith(github.ref, 'refs/tags/eve-memory-client@')" in publish_job
     assert "packages/client/scripts/publish-eve-client-pypi.sh --publish" in publish_job
     assert "--dry-run" not in publish_job
-    assert "PYPI_API_TOKEN" in publish_job
+    assert "id-token: write" in publish_job
+    assert "PYPI_API_TOKEN" not in publish_job

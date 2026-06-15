@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from eve_client._version import __version__
 from eve_client.auth.base import CredentialStore, CredentialStoreUnavailableError
 from eve_client.config import ResolvedConfig
 from eve_client.integrations import get_adapter
@@ -141,7 +142,7 @@ def verify_connectivity(
                 "params": {
                     "protocolVersion": "2025-03-26",
                     "capabilities": {},
-                    "clientInfo": {"name": "eve-client", "version": "0.1.0"},
+                    "clientInfo": {"name": "eve-memory-client", "version": __version__},
                 },
             },
             timeout,
