@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+SCRIPT_NAME="$(basename "${0:-sh}")"
+case "$SCRIPT_NAME" in
+  sh|bash|dash|zsh|-*)
+    if [ ! -t 0 ]; then
+      printf '%s\n' "Do not pipe this installer directly to sh." >&2
+      echo "Download it first, inspect it, then run:" >&2
+      echo "  sh install.sh" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
@@ -17,19 +33,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
-
-SCRIPT_NAME="$(basename "${0:-sh}")"
-
-case "$SCRIPT_NAME" in
-  sh|bash|dash|zsh|-*)
-    if [ ! -t 0 ]; then
-      echo -e "${RED}Do not pipe this installer directly to sh.${NC}" >&2
-      echo "Download it first, inspect it, then run:" >&2
-      echo "  sh install.sh" >&2
-      exit 1
-    fi
-    ;;
-esac
 
 expected_binary_for_method() {
   local method="$1"

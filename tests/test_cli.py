@@ -443,7 +443,10 @@ def test_auth_login_and_show(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
-    with patched_keyring():
+    with (
+        patched_keyring(),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+    ):
         login = runner.invoke(
             app, ["auth", "login", "--tool", "claude-code", "--api-key", "eve-secret"]
         )
@@ -462,6 +465,7 @@ def test_auth_login_enables_file_fallback_when_keyring_unavailable(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
     with (
         patch("eve_client.cli._stdin_is_tty", return_value=True),
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
         patch(
             "eve_client.auth.local_store.KeyringCredentialStore.set",
             side_effect=KeyringError("No secure keyring backend available"),
@@ -488,9 +492,12 @@ def test_auth_login_allow_file_fallback_supports_headless_mode(tmp_path: Path, m
     monkeypatch.setattr("eve_client.config.platform.system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".cfg"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / ".state"))
-    with patch(
-        "eve_client.auth.local_store.KeyringCredentialStore.set",
-        side_effect=KeyringError("No secure keyring backend available"),
+    with (
+        patch("eve_client.detect.base.shutil.which", return_value="/usr/bin/claude"),
+        patch(
+            "eve_client.auth.local_store.KeyringCredentialStore.set",
+            side_effect=KeyringError("No secure keyring backend available"),
+        ),
     ):
         result = runner.invoke(
             app,

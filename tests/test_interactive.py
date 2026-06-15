@@ -439,6 +439,7 @@ class TestInstallCommandInteractiveIntegration:
                 "eve_client.interactive.run_interactive_install", return_value=interactive_result
             ) as mock_rii,
             patch("eve_client.interactive.preview_and_confirm", return_value=True) as mock_confirm,
+            patch("eve_client.interactive.is_keyring_available", return_value=True),
             patch("eve_client.cli.resolve_config", return_value=_fake_config()),
             patch("eve_client.cli.detect_tools", return_value=_fake_detected()),
             patch("eve_client.cli.build_install_plan", return_value=_fake_plan()),

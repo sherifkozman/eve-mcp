@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PACKAGE_DIR="$ROOT_DIR/packages/client"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MONOREPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+if [ -f "$MONOREPO_ROOT/packages/client/pyproject.toml" ]; then
+  ROOT_DIR="$MONOREPO_ROOT"
+  PACKAGE_DIR="$ROOT_DIR/packages/client"
+else
+  PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+  ROOT_DIR="$PACKAGE_DIR"
+fi
 OUT_DIR="${EVE_CLIENT_RELEASE_OUT_DIR:-$ROOT_DIR/release/eve-client}"
 PYINSTALLER="${EVE_CLIENT_PYINSTALLER:-uv run --package eve-memory-client --python 3.11 --with pyinstaller pyinstaller}"
 
-VERSION="$(python3 - <<'PY'
+VERSION="$(python3 - "$PACKAGE_DIR" <<'PY'
+import sys
 from pathlib import Path
 import tomllib
 
-data = tomllib.loads(Path("packages/client/pyproject.toml").read_text())
+data = tomllib.loads((Path(sys.argv[1]) / "pyproject.toml").read_text())
 print(data["project"]["version"])
 PY
 )"
@@ -25,9 +33,9 @@ mkdir -p "$DIST_DIR" "$BIN_DIR" "$ARCHIVE_DIR" "$BUILD_DIR"
 
 cd "$ROOT_DIR"
 
-uv build "$PACKAGE_DIR"
-cp dist/eve_memory_client-"$VERSION".tar.gz "$DIST_DIR/"
-cp dist/eve_memory_client-"$VERSION"-py3-none-any.whl "$DIST_DIR/"
+uv build "$PACKAGE_DIR" --out-dir "$BUILD_DIR/python-dist"
+cp "$BUILD_DIR"/python-dist/eve_memory_client-"$VERSION".tar.gz "$DIST_DIR/"
+cp "$BUILD_DIR"/python-dist/eve_memory_client-"$VERSION"-py3-none-any.whl "$DIST_DIR/"
 
 build_binary() {
   local name="$1"

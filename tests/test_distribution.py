@@ -8,8 +8,19 @@ import venv
 import zipfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PACKAGE_ROOT = REPO_ROOT / "packages" / "client"
+def _find_package_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists() and (parent / "eve_client").is_dir():
+            return parent
+    raise AssertionError("Could not locate eve-memory-client package root")
+
+
+PACKAGE_ROOT = _find_package_root()
+MONOREPO_ROOT = PACKAGE_ROOT.parent.parent
+if (MONOREPO_ROOT / "packages" / "client" / "pyproject.toml").exists():
+    REPO_ROOT = MONOREPO_ROOT
+else:
+    REPO_ROOT = PACKAGE_ROOT
 INSTALL_SCRIPT = PACKAGE_ROOT / "scripts" / "install-eve-client.sh"
 STANDALONE_INSTALL_SCRIPT = PACKAGE_ROOT / "install.sh"
 PUBLISH_SCRIPT = PACKAGE_ROOT / "scripts" / "publish-eve-client-pypi.sh"

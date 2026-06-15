@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-PACKAGE_DIR="$ROOT_DIR/packages/client"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MONOREPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+if [ -f "$MONOREPO_ROOT/packages/client/pyproject.toml" ]; then
+  ROOT_DIR="$MONOREPO_ROOT"
+  PACKAGE_DIR="$ROOT_DIR/packages/client"
+else
+  PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+  ROOT_DIR="$PACKAGE_DIR"
+fi
 DIST_DIR="${EVE_CLIENT_DIST_DIR:-$ROOT_DIR/dist}"
 MODE="dry-run"
 SKIP_BUILD="0"
