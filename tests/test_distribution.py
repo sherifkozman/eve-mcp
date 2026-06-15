@@ -518,6 +518,8 @@ def test_release_workflow_publishes_from_client_repo_on_release_tag() -> None:
     assert "eve-memory-client@*" in workflow
     assert "workflow_dispatch:" in workflow
     assert "uv run --with pytest --with pytest-cov pytest" in workflow
+    assert "mkdir -p \"$RUNNER_TEMP/pytest-tmp\"" in workflow
+    assert "TMPDIR=\"$RUNNER_TEMP/pytest-tmp\"" in workflow
 
     assert "if: startsWith(github.ref, 'refs/tags/eve-memory-client@')" in publish_job
     assert "bash scripts/publish-eve-client-pypi.sh --publish" in publish_job
