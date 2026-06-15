@@ -13,7 +13,7 @@ PACKAGE_ROOT = REPO_ROOT / "packages" / "client"
 INSTALL_SCRIPT = PACKAGE_ROOT / "scripts" / "install-eve-client.sh"
 STANDALONE_INSTALL_SCRIPT = PACKAGE_ROOT / "install.sh"
 PUBLISH_SCRIPT = PACKAGE_ROOT / "scripts" / "publish-eve-client-pypi.sh"
-PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-eve-client.yml"
+PUBLISH_WORKFLOW = PACKAGE_ROOT / ".github" / "workflows" / "release-eve-client.yml"
 PYPI_DISTRIBUTION = "eve-memory-client"
 DIST_FILE_PREFIX = "eve_memory_client"
 
@@ -510,22 +510,16 @@ def test_publish_script_uses_env_token_without_putting_secret_on_command_line(
     assert "secret-token" not in command_log
 
 
-def test_publish_workflow_dry_runs_on_pr_and_publishes_only_on_release_tag() -> None:
+def test_release_workflow_publishes_from_client_repo_on_release_tag() -> None:
     assert PUBLISH_WORKFLOW.exists()
     workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-    dry_run_job = workflow.split("  publish:", 1)[0]
-    publish_job = "  publish:" + workflow.split("  publish:", 1)[1]
+    publish_job = "  publish-python:" + workflow.split("  publish-python:", 1)[1]
 
-    assert "pull_request:" in workflow
     assert "eve-memory-client@*" in workflow
-    assert "workflow_dispatch:" not in workflow
-    assert "if: github.event_name == 'pull_request'" in dry_run_job
-    assert "packages/client/scripts/publish-eve-client-pypi.sh --dry-run" in dry_run_job
-    assert "--publish" not in dry_run_job
-    assert "PYPI_API_TOKEN" not in dry_run_job
+    assert "workflow_dispatch:" in workflow
 
     assert "if: startsWith(github.ref, 'refs/tags/eve-memory-client@')" in publish_job
-    assert "packages/client/scripts/publish-eve-client-pypi.sh --publish" in publish_job
+    assert "bash scripts/publish-eve-client-pypi.sh --publish" in publish_job
     assert "--dry-run" not in publish_job
     assert "id-token: write" in publish_job
     assert "PYPI_API_TOKEN" not in publish_job
