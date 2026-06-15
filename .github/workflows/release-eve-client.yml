@@ -21,7 +21,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest --cov=eve_client --cov-report=term-missing -q tests
+          uv run --with pytest --with pytest-cov pytest --cov=eve_client --cov-report=term-missing -q tests
 
   build-python:
     needs: test
