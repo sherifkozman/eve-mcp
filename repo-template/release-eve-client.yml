@@ -94,4 +94,6 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Publish eve-memory-client to PyPI
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: bash scripts/publish-eve-client-pypi.sh --publish

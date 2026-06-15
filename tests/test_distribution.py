@@ -538,4 +538,5 @@ def test_release_workflow_publishes_from_client_repo_on_release_tag() -> None:
     assert "bash scripts/publish-eve-client-pypi.sh --publish" in publish_job
     assert "--dry-run" not in publish_job
     assert "id-token: write" in publish_job
-    assert "PYPI_API_TOKEN" not in publish_job
+    assert "PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}" in publish_job
+    assert "--token" not in publish_job
