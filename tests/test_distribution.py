@@ -408,12 +408,13 @@ def test_publish_script_requires_token_for_real_publish(tmp_path: Path) -> None:
         cwd=str(REPO_ROOT),
         text=True,
         capture_output=True,
-        env={
-            **os.environ,
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "PYPI_API_TOKEN": "",
-        },
-    )
+            env={
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "GITHUB_ACTIONS": "",
+                "PYPI_API_TOKEN": "",
+            },
+        )
 
     assert result.returncode != 0
     assert "PYPI_API_TOKEN is required for --publish outside GitHub Actions" in result.stderr
@@ -529,6 +530,7 @@ def test_release_workflow_publishes_from_client_repo_on_release_tag() -> None:
     assert "eve-memory-client@*" in workflow
     assert "workflow_dispatch:" in workflow
     assert "uv run --with pytest --with pytest-cov pytest" in workflow
+    assert "NO_COLOR=1 TERM=dumb TMPDIR=\"$RUNNER_TEMP/pytest-tmp\"" in workflow
     assert "mkdir -p \"$RUNNER_TEMP/pytest-tmp\"" in workflow
     assert "TMPDIR=\"$RUNNER_TEMP/pytest-tmp\"" in workflow
 
